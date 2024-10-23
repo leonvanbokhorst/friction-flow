@@ -1,7 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
+<<<<<<< HEAD
 class BaseSimulator(ABC):
+=======
+class BaseAgent(ABC):
+>>>>>>> 81d85402ba0615a47504a03307dd0c8b5ae0ac04
     @abstractmethod
     def initialize(self) -> None:
         pass

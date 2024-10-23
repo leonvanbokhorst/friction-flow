@@ -11,7 +11,11 @@ class BaseContext(ABC):
         pass
 
     @abstractmethod
+<<<<<<< HEAD
     def interpret_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+=======
+    def interpret_context(self, agent_id: str) -> Dict[str, Any]:
+>>>>>>> 81d85402ba0615a47504a03307dd0c8b5ae0ac04
         pass
 
     @abstractmethod
@@ -19,5 +23,9 @@ class BaseContext(ABC):
         pass
 
     @abstractmethod
+<<<<<<< HEAD
     def adapt_response(self, initial_response: str, context: Dict[str, Any]) -> Dict[str, Any]:
+=======
+    def adapt_response(self, agent_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
+>>>>>>> 81d85402ba0615a47504a03307dd0c8b5ae0ac04
         pass
