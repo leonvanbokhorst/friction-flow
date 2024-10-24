@@ -1,15 +1,31 @@
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List, Dict, Optional, Any
-from uuid import uuid4
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import List, Dict
+
 import asyncio
 import json
+import logging
+import os
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from typing import Any, Dict, List, TypedDict, Union, Literal, NewType, Optional, Final
+from uuid import uuid4
+from enum import Enum, auto
+from typing_extensions import TypeGuard
+import typing
+
 import chromadb
 import ollama
-import logging
-from logging.handlers import RotatingFileHandler
-import os
 from chromadb.config import Settings
+
+DEFAULT_SIMILARITY_THRESHOLD: Final[float] = typing.cast(float, 0.8)
+DEFAULT_RESONANCE_LIMIT: Final[int] = typing.cast(int, 3)
+MAX_LOG_FILE_SIZE: Final[int] = typing.cast(int, 10 * 1024 * 1024)  # 10 MB
+MAX_LOG_BACKUP_COUNT: Final[int] = typing.cast(int, 19)  # 20 files total
 
 # Create a logs directory if it doesn't exist
 log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
@@ -26,8 +42,8 @@ logger.setLevel(logging.DEBUG)
 # Create a rotating file handler
 file_handler = RotatingFileHandler(
     log_file,
-    maxBytes=1024 * 1024 * 10,  # 10 MB per file
-    backupCount=19,  # Keep 19 backup files, plus the current one (20 total)
+    maxBytes=MAX_LOG_FILE_SIZE,
+    backupCount=MAX_LOG_BACKUP_COUNT,
 )
 file_handler.setLevel(logging.DEBUG)
 file_formatter = logging.Formatter(
@@ -45,51 +61,137 @@ console_handler.setFormatter(console_formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+StoryID = NewType("StoryID", str)
 
+
+# 1. Define base classes and abstract classes
+class VectorStore(ABC):
+    @abstractmethod
+    async def store(self, story: "Story", embedding: List[float]) -> None:
+        pass
+
+    @abstractmethod
+    async def find_similar(
+        self, embedding: List[float], threshold: float, limit: int
+    ) -> List[Dict]:
+        pass
+
+
+class LanguageModel(ABC):
+    @abstractmethod
+    async def generate(self, prompt: str) -> str:
+        pass
+
+    @abstractmethod
+    async def generate_embedding(self, text: str) -> List[float]:
+        pass
+
+
+# 2. Define data classes and enums
 @dataclass
 class Story:
-    """A narrative element in the field with rich context"""
-
     content: str
     context: str
-    id: str = field(default_factory=lambda: str(uuid4()))
+    id: StoryID = field(default_factory=lambda: StoryID(str(uuid4())))
     timestamp: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Optional[Dict[str, Any]] = field(default=None)
     resonances: List[str] = field(default_factory=list)
     field_effects: List[Dict] = field(default_factory=list)
-    personal_narrative: str = field(default="")
-    emotional_impact: str = field(default="")
+
+
+@dataclass
+class Pattern:
+    name: str
+    description: str
+    strength: float = 0.0
+    related_stories: List[StoryID] = field(default_factory=list)
+
+    def update_strength(self, new_strength: float):
+        self.strength = new_strength
+
+    def add_related_story(self, story_id: StoryID):
+        if story_id not in self.related_stories:
+            self.related_stories.append(story_id)
+
+
+@dataclass
+class Resonance:
+    type: str
+    strength: float
+    source_story: StoryID
+    target_story: StoryID
+    description: str = ""
+
+    def update_strength(self, new_strength: float):
+        self.strength = new_strength
+
+
+@dataclass
+class EmergencePoint:
+    story_id: StoryID
+    timestamp: datetime
+    type: str = "new_narrative"
+    resonance_context: List[Resonance] = field(default_factory=list)
+    related_patterns: List[Pattern] = field(default_factory=list)
+
+    def add_related_pattern(self, pattern: Pattern):
+        if pattern not in self.related_patterns:
+            self.related_patterns.append(pattern)
 
 
 @dataclass
 class FieldState:
-    """Represents the current state of the narrative field"""
-
     description: str
-    patterns: List[Dict] = field(default_factory=list)
-    active_resonances: List[Dict] = field(default_factory=list)
-    emergence_points: List[Dict] = field(default_factory=list)
+    patterns: List[Pattern] = field(default_factory=list)
+    active_resonances: List[Resonance] = field(default_factory=list)
+    emergence_points: List[EmergencePoint] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
 
+    def add_pattern(self, pattern: Pattern):
+        self.patterns.append(pattern)
 
-class OllamaInterface:
-    """Interface to Ollama LLM"""
+    def add_resonance(self, resonance: Resonance):
+        self.active_resonances.append(resonance)
 
+    def add_emergence_point(self, point: EmergencePoint):
+        self.emergence_points.append(point)
+
+    def update_description(self, new_description: str):
+        self.description = new_description
+        self.timestamp = datetime.now()
+
+
+class ImpactAnalysis(TypedDict):
+    analysis: str
+    timestamp: datetime
+    story_id: str
+
+
+class ResonanceAnalysis(TypedDict):
+    type: Literal["narrative_resonance"]
+    analysis: str
+    stories: Dict[
+        Literal["source", "resonant"], Dict[Literal["id", "content", "context"], str]
+    ]
+    timestamp: datetime
+
+
+# 3. Implement concrete classes
+class OllamaInterface(LanguageModel):
     def __init__(
         self,
         model_name: str = "mistral-nemo",
         embed_model_name: str = "mxbai-embed-large",
     ):
-        self.model = model_name
-        self.embed_model = embed_model_name
-        self.embedding_cache = {}
-        self.logger = logging.getLogger(__name__)
+        self.model: str = model_name
+        self.embed_model: str = embed_model_name
+        self.embedding_cache: Dict[str, List[float]] = {}
+        self.logger: logging.Logger = logging.getLogger(__name__)
         self.logger.info(
             f"Initializing OllamaInterface with models: main={self.model}, embedding={self.embed_model}"
         )
 
-    async def analyze(self, prompt: str) -> str:
-        """Get LLM analysis of narrative"""
+    async def generate(self, prompt: str) -> str:
         self.logger.debug(f"Sending prompt to LLM: {prompt}")
         self.logger.info(f"Prompt length sent to LLM: {len(prompt)} characters")
         response = await asyncio.to_thread(
@@ -102,31 +204,34 @@ class OllamaInterface:
         self.logger.info(f"Response length from LLM: {len(content)} characters")
         return content
 
-    async def generate_embedding(self, text: str) -> List[float]:
+    async def generate_embedding(self, story: Story) -> List[float]:
+        # Use the Story's GUID as the cache key
+        cache_key = story.id
+        text_to_embed = f"{story.content} {story.context}"
+
         # Check cache first
         self.logger.info("Checking embedding cache before generating")
-        cache_key = hash(text)  # or another suitable hashing method
         if cache_key in self.embedding_cache:
-            self.logger.info(f"Embedding retrieved from cache for key: {cache_key}")
+            self.logger.info(
+                f"Embedding retrieved from cache for story ID: {cache_key}"
+            )
             return self.embedding_cache[cache_key]
 
         # Generate if not cached
         response = await asyncio.to_thread(
-            ollama.embeddings, model=self.embed_model, prompt=text
+            ollama.embeddings, model=self.embed_model, prompt=text_to_embed
         )
         embedding = response["embedding"]
 
         # Cache the result
         self.embedding_cache[cache_key] = embedding
         self.logger.info(
-            f"Embedding generated and cached successfully with key: {cache_key}"
+            f"Embedding generated and cached successfully for story ID: {cache_key} with length {len(embedding)}"
         )
         return embedding
 
 
-class ChromaStore:
-    """Local vector store using ChromaDB"""
-
+class ChromaStore(VectorStore):
     def __init__(self, collection_name: str = "narrative_field"):
         self.client = chromadb.Client(Settings(anonymized_telemetry=False))
         self.logger = logging.getLogger(__name__)
@@ -141,15 +246,33 @@ class ChromaStore:
             self.logger.info(f"Collection {collection_name} created")
             self.logger.info(f"Collection metadata: {self.collection.metadata}")
 
-    async def store(self, id: str, embedding: List[float], metadata: Dict) -> None:
-        """Store embedding and metadata"""
-        self.logger.info(f"Storing embedding and metadata for story: {id}")
+    async def store(self, story: Story, embedding: List[float]) -> None:
+        """Store story embedding and metadata"""
+        self.logger.info(f"Storing embedding and metadata for story: {story.id}")
         self.logger.debug(f"Embedding length: {len(embedding)}")
+
+        metadata = {
+            "content": story.content,
+            "context": story.context,
+            "field_effects": json.dumps(
+                [
+                    {
+                        "analysis": effect["analysis"],
+                        "timestamp": effect["timestamp"].isoformat(),
+                        "story_id": effect["story_id"],
+                    }
+                    for effect in story.field_effects
+                ]
+            ),
+            "resonances": json.dumps(story.resonances),
+            "timestamp": story.timestamp.isoformat(),
+        }
+
         await asyncio.to_thread(
             self.collection.add,
             documents=[json.dumps(metadata)],
             embeddings=[embedding],
-            ids=[id],
+            ids=[story.id],
             metadatas=[metadata],
         )
 
@@ -193,14 +316,15 @@ class ChromaStore:
         return thresholded
 
 
+# 4. Define main logic classes
 class FieldAnalyzer:
-    """Handles analysis of narrative field dynamics"""
+    def __init__(self, llm_interface: LanguageModel):
+        self.llm: LanguageModel = llm_interface
+        self.logger: logging.Logger = logging.getLogger(__name__)
 
-    def __init__(self, llm_interface):
-        self.llm = llm_interface
-        self.logger = logging.getLogger(__name__)
-
-    async def analyze_impact(self, story: Story, current_state: FieldState) -> Dict:
+    async def analyze_impact(
+        self, story: Story, current_state: FieldState
+    ) -> Dict[str, Any]:
         """Analyze how a story impacts the field"""
         prompt = f"""
         Current field state: {current_state.description}
@@ -209,7 +333,6 @@ class FieldAnalyzer:
         New narrative entering field:
         Content: {story.content}
         Context: {story.context}
-        Personal Narrative: {story.personal_narrative}
         
         Analyze field impact:
         1. Immediate resonance effects
@@ -222,7 +345,7 @@ class FieldAnalyzer:
         Provide a qualitative, story-driven analysis without using numeric measures.
         """
 
-        analysis = await self.llm.analyze(prompt)
+        analysis = await self.llm.generate(prompt)
 
         result = {
             "analysis": analysis,
@@ -233,7 +356,7 @@ class FieldAnalyzer:
 
     async def detect_patterns(
         self, stories: List[Story], current_state: FieldState
-    ) -> List[Dict]:
+    ) -> List[Dict[str, Any]]:
         """Identify emergent patterns in the narrative field"""
         self.logger.info(f"Detecting patterns for {len(stories)} stories")
         self.logger.debug(f"Current field state: {current_state.description}")
@@ -269,7 +392,7 @@ class FieldAnalyzer:
             f"Emergent pattern detection prompt length: {len(prompt)} characters"
         )
 
-        patterns = await self.llm.analyze(prompt)
+        patterns = await self.llm.generate(prompt)
         self.logger.debug(f"Received emergent patterns response: {patterns}")
         self.logger.info(
             f"Emergent pattern detection response length: {len(patterns)} characters"
@@ -278,23 +401,26 @@ class FieldAnalyzer:
 
 
 class ResonanceDetector:
-    """Handles semantic detection and analysis of narrative resonances"""
+    def __init__(self, vector_store: VectorStore, llm_interface: LanguageModel):
+        self.vector_store: VectorStore = vector_store
+        self.llm: LanguageModel = llm_interface
+        self.logger: logging.Logger = logging.getLogger(__name__)
 
-    def __init__(self, vector_store, llm_interface):
-        self.vector_store = vector_store
-        self.llm = llm_interface
-        self.logger = logging.getLogger(__name__)
-
-    async def find_resonances(self, story: Story, limit: int = 3) -> List[Dict]:
+    async def find_resonances(
+        self,
+        story: Story,
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        limit: int = DEFAULT_RESONANCE_LIMIT,
+    ) -> List[Dict[str, Any]]:
         """Find and analyze resonating stories using semantic understanding"""
         self.logger.debug(f"Finding resonances for story: {story.id}")
 
-        embedding = await self.llm.generate_embedding(
-            story.content + " " + story.context
-        )
+        embedding = await self.llm.generate_embedding(story)
         self.logger.debug(f"Generated embedding for story: {story.id}")
 
-        similar_stories = await self.vector_store.find_similar(embedding, limit=limit)
+        similar_stories = await self.vector_store.find_similar(
+            embedding, threshold=threshold, limit=limit
+        )
         self.logger.debug(f"Found {len(similar_stories)} similar stories")
 
         resonances = []
@@ -325,17 +451,17 @@ class ResonanceDetector:
         self.logger.info(f"Found {len(resonances)} resonances for story: {story.id}")
         return resonances
 
-    async def determine_resonance_type(self, story1: Story, story2: Story) -> Dict:
+    async def determine_resonance_type(
+        self, story1: Story, story2: Story
+    ) -> ResonanceAnalysis:
         prompt = f"""
         Analyze the narrative resonance between these two stories:
         
         Story 1: {story1.content}
         Context 1: {story1.context}
-        Personal Narrative 1: {story1.personal_narrative}
         
         Story 2: {story2.content}
         Context 2: {story2.context}
-        Personal Narrative 2: {story2.personal_narrative}
         
         Provide a detailed analysis:
         1. Narrative Relationship:
@@ -354,9 +480,9 @@ class ResonanceDetector:
         Provide a qualitative, story-driven analysis without using numeric measures.
         """
 
-        analysis = await self.llm.analyze(prompt)
+        analysis = await self.llm.generate(prompt)
 
-        result = {
+        result: ResonanceAnalysis = {
             "type": "narrative_resonance",
             "analysis": analysis,
             "stories": {
@@ -364,13 +490,11 @@ class ResonanceDetector:
                     "id": story1.id,
                     "content": story1.content,
                     "context": story1.context,
-                    "personal_narrative": story1.personal_narrative,
                 },
                 "resonant": {
                     "id": story2.id,
                     "content": story2.content,
                     "context": story2.context,
-                    "personal_narrative": story2.personal_narrative,
                 },
             },
             "timestamp": datetime.now(),
@@ -379,79 +503,70 @@ class ResonanceDetector:
 
 
 class NarrativeField:
-    """Core system for managing narrative field dynamics"""
+    def __init__(self, llm_interface: LanguageModel, vector_store: VectorStore):
+        self._analyzer: FieldAnalyzer = FieldAnalyzer(llm_interface)
+        self._resonance_detector: ResonanceDetector = ResonanceDetector(
+            vector_store, llm_interface
+        )
+        self._vector_store: VectorStore = vector_store
+        self._state: FieldState = FieldState(
+            description="Initial empty narrative field"
+        )
+        self._stories: Dict[StoryID, Story] = {}
+        self._logger: logging.Logger = logging.getLogger(__name__)
 
-    def __init__(self, llm_interface, vector_store):
-        self.analyzer = FieldAnalyzer(llm_interface)
-        self.resonance_detector = ResonanceDetector(vector_store, llm_interface)
-        self.vector_store = vector_store
-        self.state = FieldState(description="Initial empty narrative field")
-        self.stories: Dict[str, Story] = {}
-        self.logger = logging.getLogger(__name__)
+    @property
+    def state(self) -> FieldState:
+        return self._state
+
+    @property
+    def stories(self) -> Dict[StoryID, Story]:
+        return self._stories.copy()  # Return a copy to prevent direct modification
 
     async def add_story(self, content: str, context: str) -> Story:
-        """Add a new story and analyze its field effects"""
-        story = Story(content=content, context=context)
-        self.logger.info(f"Adding new story: {story.id}")
+        story: Story = Story(content=content, context=context)
+        self._logger.info(f"Adding new story: {story.id}")
+        self._logger.debug(f"Story content: {story.content}")
+        self._logger.debug(f"Story context: {story.context}")
 
         # Analyze field impact
-        impact = await self.analyzer.analyze_impact(story, self.state)
+        impact: ImpactAnalysis = await self._analyzer.analyze_impact(story, self.state)
         story.field_effects.append(impact)
-        self.logger.debug(f"Field impact analysis completed for story: {story.id}")
+        self._logger.debug(f"Field impact analysis completed for story: {story.id}")
 
         # Find resonances
-        resonances = await self.resonance_detector.find_resonances(story)
+        resonances: List[Dict[str, Any]] = (
+            await self._resonance_detector.find_resonances(story)
+        )
         story.resonances.extend([r["story_id"] for r in resonances])
-        self.logger.debug(f"Found {len(resonances)} resonances for story: {story.id}")
+        self._logger.debug(f"Found {len(resonances)} resonances for story: {story.id}")
 
         # Store story and update field
         await self._store_story(story)
         await self._update_field_state(story, impact, resonances)
-        self.logger.info(f"Story {story.id} added and field state updated")
+        self._logger.info(f"Story {story.id} added and field state updated")
 
         return story
 
     async def _store_story(self, story: Story) -> None:
         """Store story and its embeddings"""
-        self.logger.info(f"Storing story: {story.id}")
-        self.logger.debug(
-            f"Story length sent to LLM for embedding: {len(story.content + story.context)}"
-        )
-        embedding = await self.resonance_detector.llm.generate_embedding(
-            story.content + " " + story.context
-        )
+        self._logger.info(f"Storing story: {story.id}")
+        embedding = await self._resonance_detector.llm.generate_embedding(story)
 
-        metadata = {
-            "content": story.content,
-            "context": story.context,
-            "field_effects": json.dumps(
-                [
-                    {
-                        "analysis": effect["analysis"],
-                        "timestamp": effect["timestamp"].isoformat(),
-                        "story_id": effect["story_id"],
-                    }
-                    for effect in story.field_effects
-                ]
-            ),
-            "resonances": json.dumps(story.resonances),
-            "timestamp": story.timestamp.isoformat(),
-        }
-
-        await self.vector_store.store(story.id, embedding, metadata)
-        self.logger.info(f"Story {story.id} stored successfully in vector store")
-        self.stories[story.id] = story
+        await self._vector_store.store(story, embedding)
+        self._logger.info(f"Story {story.id} stored successfully in vector store")
+        self._stories[story.id] = story
 
     async def _update_field_state(
         self, story: Story, impact: Dict, resonances: List[Dict]
     ) -> None:
         """Update field state with enhanced resonance understanding"""
 
-        patterns = await self.analyzer.detect_patterns(
-            list(self.stories.values()), self.state
+        patterns = await self._analyzer.detect_patterns(
+            list(self._stories.values()), self.state
         )
 
-        self.state = FieldState(
+        self._state = FieldState(
             description=impact["analysis"],
             patterns=patterns,
             active_resonances=resonances,
@@ -468,24 +583,21 @@ class NarrativeField:
         )
 
 
+# 5. Keep the demo function at the end
 async def demo_scenario():
-    """Demonstrate the narrative field system with a simple scenario"""
     logger.info("Starting narrative field demonstration...")
 
     # Initialize components
-    llm = OllamaInterface(
-        model_name="mistral-nemo",
-        embed_model_name="nomic-embed-text:latest",  # "mxbai-embed-large"
-    )
+    llm: LanguageModel = OllamaInterface()
     logger.info(f"Initialized Ollama interface")
 
-    vector_store = ChromaStore(collection_name="research_lab")
+    vector_store: VectorStore = ChromaStore(collection_name="research_lab")
     logger.info(f"Initialized Chroma vector store")
+
     field = NarrativeField(llm, vector_store)
     logger.info(f"Initialized narrative field")
 
     # Research Lab Scenario with Multiple Characters and 20 Events
-
     stories = [
         # Event 1: Leon's frustration
         {
@@ -593,20 +705,7 @@ async def demo_scenario():
     logger.info(f"Processing {len(stories)} stories and analyzing field effects...")
     for story in stories:
         try:
-            logger.debug(f"Adding story: {story['content']}")
-            result = await field.add_story(story["content"], story["context"])
-            logger.info(f"Added story: {result.id}")
-            logger.debug(f"Field effects: {result.field_effects[-1]['analysis']}")
-            logger.debug(f"Current field state: {field.state.description}")
-
-            if result.resonances:
-                logger.info(
-                    f"Detected {len(result.resonances)} resonances for story {result.id}"
-                )
-                for r_id in result.resonances:
-                    r_story = field.stories.get(r_id)
-                    if r_story:
-                        logger.debug(f"Resonates with: {r_story.content}")
+            await field.add_story(story["content"], story["context"])
 
         except Exception as e:
             logger.error(f"Error processing story: {e}", exc_info=True)
