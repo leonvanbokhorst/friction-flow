@@ -1,2 +1,4 @@
 ollama
 chromadb
+llama-cpp-python
+numpy   
