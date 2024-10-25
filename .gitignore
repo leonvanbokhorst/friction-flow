@@ -1,4 +1,8 @@
 .DS_Store
+models/
+logs/
+.log
+*.log*  
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

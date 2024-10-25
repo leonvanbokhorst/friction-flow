@@ -4,36 +4,27 @@ A framework for analyzing and tracking narrative dynamics in complex social syst
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Final, NewType
+from typing import List, Dict, Any, Optional, Final, NewType, Tuple
 from datetime import datetime
 from uuid import uuid4
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 import logging
 import logging.handlers
-import json
-import os
-import asyncio
-import chromadb
-from chromadb.config import Settings
-import ollama
-from llama_cpp import Llama
-import numpy as np
 import psutil
-import multiprocessing as mp
 import time
-from typing import Tuple
 import gc
 import atexit
+import json
+import asyncio
 import torch
-import platform
-import subprocess
-from llama_cpp import llama
-import ctypes
-import sys
+import chromadb
+from chromadb.config import Settings
+
 
 # Local imports
 from logging_config import setup_logging
+from language_models import LanguageModel, OllamaInterface, LlamaInterface
 
 # Type Definitions
 StoryID = NewType("StoryID", str)
@@ -41,34 +32,6 @@ StoryID = NewType("StoryID", str)
 # Constants
 DEFAULT_SIMILARITY_THRESHOLD: Final[float] = 0.8
 DEFAULT_RESONANCE_LIMIT: Final[int] = 3
-MAX_LOG_FILE_SIZE: Final[int] = 10 * 1024 * 1024  # 10 MB
-MAX_LOG_BACKUP_COUNT: Final[int] = 9  # 10 files total
-
-# Different quantization options from best quality to smallest size
-MODEL_CONFIGS = {
-    "balanced": {
-        "chat": {
-            "path": "/Users/leonvanbokhorst/.cache/lm-studio/models/lmstudio-community/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q8_0.gguf",
-            "size_gb": 3.42,
-            "relative_speed": 0.8,
-        },
-        "embedding": {
-            "path": "/Users/leonvanbokhorst/.cache/lm-studio/models/nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q8_0.gguf",
-            "size_gb": 0.146,
-        },
-    },
-}
-
-
-# Base Classes
-class LanguageModel(ABC):
-    @abstractmethod
-    async def generate(self, prompt: str) -> str:
-        pass
-
-    @abstractmethod
-    async def generate_embedding(self, text: str) -> List[float]:
-        pass
 
 
 class VectorStore(ABC):
@@ -197,42 +160,6 @@ Examine:
 Describe connections naturally, focusing on meaning and impact."""
 
 
-# Core Components
-class OllamaInterface(LanguageModel):
-    def __init__(
-        self,
-        quality_preset: str = "balanced",
-        model_path: str = None,
-        embedding_model_path: str = None,
-    ):
-        config = MODEL_CONFIGS[quality_preset]
-        self.chat_model_path = model_path or config["chat"]["path"]
-        self.embedding_model_path = embedding_model_path or config["embedding"]["path"]
-        self.embedding_cache: Dict[str, List[float]] = {}
-        self.logger = logging.getLogger(__name__)
-
-    async def generate(self, prompt: str) -> str:
-        self.logger.debug(f"Generating response for prompt: {prompt}")
-        response = await asyncio.to_thread(
-            ollama.chat,
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        self.logger.debug(f"Response from LLM: {response['message']['content']}")
-        return response["message"]["content"]
-
-    async def generate_embedding(self, text: str) -> List[float]:
-        if text in self.embedding_cache:
-            return self.embedding_cache[text]
-
-        response = await asyncio.to_thread(
-            ollama.embeddings, model=self.embed_model, prompt=text
-        )
-        embedding = response["embedding"]
-        self.embedding_cache[text] = embedding
-        return embedding
-
-
 class PerformanceMetrics:
     def __init__(self):
         self.metrics: Dict[str, Dict[str, Any]] = {}
@@ -284,102 +211,12 @@ class PerformanceMetrics:
         self.logger.info(f"Memory Usage: {memory_info.percent}%")
 
 
-import warnings
-
-
-class LlamaInterface(LanguageModel):
-    def __init__(
-        self,
-        quality_preset: str = "balanced",
-        model_path: str = None,
-        embedding_model_path: str = None,
-        **kwargs,
-    ):
-        config = MODEL_CONFIGS[quality_preset]
-        chat_model_path = model_path or config["chat"]["path"]
-        embedding_model_path = embedding_model_path or config["embedding"]["path"]
-
-        # Modified initialization parameters
-        optimal_config = {
-            "n_gpu_layers": -1,
-            "n_batch": 512,
-            "n_ctx": 16384,
-            # "n_kv": 256,
-            # "flash_attn": True,  # Use Flash Attention for faster attention
-            # "rope_scaling_type": 1,  # Use dynamic rope scaling for better performance
-            # "use_mmap": True,  # Use memory-mapped files for faster loading
-            # "use_mlock": False,  # Lock the model in memory
-            "metal_device": "mps",  # Use Metal for GPU acceleration
-            "main_gpu": 0,  # Use the first GPU
-            "use_metal": True,  # Explicitly enable Metal
-            "n_threads": 4,  # Use 4 threads for parallelism
-            # "offload_kqv": True,  # Offload KV cache to CPU
-        }
-
-        self.logger = logging.getLogger(__name__)
-
-        try:
-            # Suppress warnings about the callback function
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self.llm = Llama(
-                    model_path=chat_model_path,
-                    verbose=False,  # Set to False to reduce logging
-                    **optimal_config,
-                )
-
-                self.embedding_model = Llama(
-                    model_path=embedding_model_path,
-                    embedding=True,
-                    verbose=False,  # Set to False to reduce logging
-                    **optimal_config,
-                )
-        except Exception as e:
-            self.logger.error(f"Failed to load models: {e}", exc_info=True)
-            raise
-
-    async def generate(self, prompt: str) -> str:
-        """Generate response using the LLM"""
-        self.logger.debug(f"Generating response for prompt: {prompt}")
-        try:
-            response = await asyncio.to_thread(
-                self.llm.create_chat_completion,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            self.logger.debug(
-                f"Response from LLM: {response['choices'][0]['message']['content']}"
-            )
-            return response["choices"][0]["message"]["content"]
-        except Exception as e:
-            self.logger.error(f"Error generating response: {e}", exc_info=True)
-            return "Error generating response"
-
-    async def generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding for the given text"""
-        try:
-            embedding = await asyncio.to_thread(self.embedding_model.embed, text)
-            return embedding
-        except Exception as e:
-            self.logger.error(f"Error generating embedding: {e}", exc_info=True)
-            return []
-
-    async def cleanup(self):
-        """Clean up resources"""
-        if hasattr(self, "llm"):
-            del self.llm
-        if hasattr(self, "embedding_model"):
-            del self.embedding_model
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-
 class PerformanceMonitor:
     def __init__(self):
         self.metrics = []
 
     async def monitor_generation(
-        self, llm: LlamaInterface, prompt: str
+        self, llm: LanguageModel, prompt: str
     ) -> Tuple[str, Dict[str, float]]:
         start_time = time.perf_counter()
         memory_before = psutil.virtual_memory().used
@@ -419,7 +256,7 @@ class BatchMetrics:
 
 
 class BatchProcessor:
-    def __init__(self, llm: LlamaInterface):
+    def __init__(self, llm: LanguageModel):
         self.llm = llm
         self.optimal_batch_size = 4  # Will be adjusted dynamically
 
@@ -713,9 +550,7 @@ async def demo_scenario():
         # Perform global cleanup before initializing new LLM
         global_cleanup()
 
-        # Initialize components with LlamaInterface
-        # Only pass the parameters that LlamaInterface expects
-        llm = LlamaInterface()
+        llm = OllamaInterface()
 
         vector_store: VectorStore = ChromaStore(collection_name="research_lab")
         logger.info(f"Initialized Chroma vector store")
