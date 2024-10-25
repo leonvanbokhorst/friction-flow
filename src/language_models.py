@@ -11,7 +11,7 @@ import ollama
 import torch
 from llama_cpp import Llama
 from config import MODEL_CONFIGS
-from embedding_cache import EmbeddingCache, InMemoryEmbeddingCache
+from embedding_cache import EmbeddingCache
 
 
 class NetworkError(Exception):
@@ -55,7 +55,7 @@ class LanguageModel(ABC):
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.info(f"Initializing {self.__class__.__name__}")
-        self.embedding_cache: EmbeddingCache = InMemoryEmbeddingCache()
+        self.embedding_cache: EmbeddingCache = EmbeddingCache()
 
     @abstractmethod
     async def generate(self, prompt: str) -> str:
@@ -185,10 +185,12 @@ class LlamaInterface(LanguageModel):
         """Set up the language models."""
         chat_model_filename = Path(self.chat_model_path).name
         embedding_model_filename = Path(self.embedding_model_path).name
-        
+
         self.logger.info(f"Setting up Llama chat model: {chat_model_filename}")
-        self.logger.info(f"Setting up Llama embedding model: {embedding_model_filename}")
-        
+        self.logger.info(
+            f"Setting up Llama embedding model: {embedding_model_filename}"
+        )
+
         try:
             self.llm = Llama(
                 model_path=str(self.chat_model_path),

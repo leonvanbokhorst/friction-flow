@@ -1,28 +1,11 @@
-"""Module for caching embeddings with different storage strategies."""
+"""Module for caching embeddings."""
 
-from abc import ABC, abstractmethod
 import hashlib
 from typing import Dict, List, Optional
 
 
-class EmbeddingCache(ABC):
-    """Abstract base class for embedding caches."""
-
-    @abstractmethod
-    def get(self, key: str) -> Optional[List[float]]:
-        """Retrieve an embedding from the cache."""
-
-    @abstractmethod
-    def set(self, key: str, value: List[float]) -> None:
-        """Store an embedding in the cache."""
-
-    @abstractmethod
-    def clear(self) -> None:
-        """Clear all entries from the cache."""
-
-
-class InMemoryEmbeddingCache(EmbeddingCache):
-    """In-memory implementation of the EmbeddingCache."""
+class EmbeddingCache:
+    """Hash-based cache for storing embeddings."""
 
     def __init__(self):
         self._cache: Dict[str, List[float]] = {}
@@ -34,18 +17,12 @@ class InMemoryEmbeddingCache(EmbeddingCache):
 
     def get(self, key: str) -> Optional[List[float]]:
         """Retrieve an embedding from the cache using a hashed key."""
-        hashed_key = self.get_stable_hash(key)
-        return self._cache.get(hashed_key)
+        return self._cache.get(self.get_stable_hash(key))
 
     def set(self, key: str, value: List[float]) -> None:
         """Store an embedding in the cache using a hashed key."""
-        hashed_key = self.get_stable_hash(key)
-        self._cache[hashed_key] = value
+        self._cache[self.get_stable_hash(key)] = value
 
     def clear(self) -> None:
         """Clear all entries from the cache."""
         self._cache.clear()
-
-
-
-
