@@ -550,7 +550,7 @@ async def demo_scenario():
         # Perform global cleanup before initializing new LLM
         global_cleanup()
 
-        llm = OllamaInterface()
+        llm = LlamaInterface()
 
         vector_store: VectorStore = ChromaStore(collection_name="research_lab")
         logger.info(f"Initialized Chroma vector store")

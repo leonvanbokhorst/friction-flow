@@ -3,3 +3,6 @@ chromadb
 llama-cpp-python
 numpy   
 appdirs 
+pydantic
+psutil
+torch
