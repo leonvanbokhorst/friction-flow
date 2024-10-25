@@ -1,3 +1,10 @@
+"""
+This module defines abstract and concrete implementations of language models.
+
+It includes classes for interfacing with Ollama and Llama models, as well as
+utility functions and custom exceptions for error handling.
+"""
+
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Callable
@@ -41,6 +48,16 @@ class ModelInitializationError(Exception):
 
 
 def async_error_handler(func: Callable) -> Callable:
+    """
+    A decorator to handle errors in asynchronous functions.
+
+    Args:
+        func (Callable): The asynchronous function to be wrapped.
+
+    Returns:
+        Callable: The wrapped function that catches and re-raises exceptions as ModelError.
+    """
+
     @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
@@ -52,9 +69,17 @@ def async_error_handler(func: Callable) -> Callable:
 
 
 class LanguageModel(ABC):
-    """Abstract base class for language models."""
+    """
+    Abstract base class for language models.
+
+    This class defines the interface for language model implementations and
+    provides common functionality such as embedding caching.
+    """
 
     def __init__(self):
+        """
+        Initialize the LanguageModel with a logger and embedding cache.
+        """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.info(f"Initializing {self.__class__.__name__}")
         self.embedding_cache: EmbeddingCache = EmbeddingCache()
@@ -71,6 +96,7 @@ class LanguageModel(ABC):
 
     @async_error_handler
     async def generate_embedding(self, text: str) -> List[float]:
+        # sourcery skip: use-named-expression
         """Generate an embedding for the given text."""
         if not text:
             self.logger.warning("Attempted to generate embedding for empty text")
@@ -105,9 +131,24 @@ class LanguageModel(ABC):
 
 
 class OllamaInterface(LanguageModel):
-    """Interface for the Ollama language model."""
+    """
+    Interface for the Ollama language model.
+
+    This class provides methods to interact with Ollama models for text generation
+    and embedding creation.
+    """
 
     def __init__(self, quality_preset: str = "balanced"):
+        """
+        Initialize the OllamaInterface with the specified quality preset.
+
+        Args:
+            quality_preset (str): The quality preset to use for model configuration.
+                                  Defaults to "balanced".
+
+        Raises:
+            ModelInitializationError: If the quality preset is invalid or configuration is missing.
+        """
         super().__init__()
         try:
             self.chat_model_name = MODEL_CONFIGS[quality_preset]["chat"]["model_name"]
@@ -121,7 +162,12 @@ class OllamaInterface(LanguageModel):
             ) from e
 
     def _setup_models(self) -> None:
-        """Set up the language models."""
+        """
+        Set up the Ollama models for chat and embedding.
+
+        Raises:
+            ModelInitializationError: If Ollama fails to start.
+        """
         self.logger.info(f"Setting up Ollama models for {self.chat_model_name}")
         self.logger.info(
             f"Setting up Ollama embedding model for {self.embedding_model_name}"
@@ -165,9 +211,24 @@ class OllamaInterface(LanguageModel):
 
 
 class LlamaInterface(LanguageModel):
-    """Interface for the Llama language model."""
+    """
+    Interface for the Llama language model.
+
+    This class provides methods to interact with Llama models for text generation
+    and embedding creation using local model files.
+    """
 
     def __init__(self, quality_preset: str = "balanced"):
+        """
+        Initialize the LlamaInterface with the specified quality preset.
+
+        Args:
+            quality_preset (str): The quality preset to use for model configuration.
+                                  Defaults to "balanced".
+
+        Raises:
+            ModelInitializationError: If the quality preset is invalid or configuration is missing.
+        """
         super().__init__()
         try:
             self.chat_model_path = MODEL_CONFIGS[quality_preset]["chat"]["path"]
@@ -184,7 +245,12 @@ class LlamaInterface(LanguageModel):
             ) from e
 
     def _setup_models(self) -> None:
-        """Set up the language models."""
+        """
+        Set up the Llama models for chat and embedding.
+
+        Raises:
+            ModelInitializationError: If model initialization fails.
+        """
         chat_model_filename = Path(self.chat_model_path).name
         embedding_model_filename = Path(self.embedding_model_path).name
 
@@ -243,7 +309,11 @@ class LlamaInterface(LanguageModel):
         return await asyncio.to_thread(self.embedding_model.embed, text)
 
     async def cleanup(self) -> None:
-        """Clean up resources used by the model."""
+        """
+        Clean up resources used by the Llama models.
+
+        This method extends the base class cleanup by also deleting the Llama model instances.
+        """
         await super().cleanup()
         if self.llm:
             del self.llm

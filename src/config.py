@@ -1,9 +1,19 @@
-from pathlib import Path
+"""
+Configuration module for the lab-politik application.
 
+This module contains global configuration variables and model-specific
+configurations for the application.
+"""
+
+from pathlib import Path
+from typing import Dict, Any
+
+# Application-wide constants
 APP_NAME: str = "lab-politik"
 IS_DEVELOPMENT: bool = True
 
-MODEL_CONFIGS = {
+# Model configuration dictionary
+MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     "balanced": {
         "chat": {
             "path": Path(
@@ -32,3 +42,21 @@ MODEL_CONFIGS = {
         },
     },
 }
+
+def get_model_config(config_name: str = "balanced") -> Dict[str, Any]:
+    """
+    Retrieve the model configuration for a given configuration name.
+
+    Args:
+        config_name (str): The name of the configuration to retrieve.
+                           Defaults to "balanced".
+
+    Returns:
+        Dict[str, Any]: The model configuration dictionary.
+
+    Raises:
+        KeyError: If the specified config_name is not found in MODEL_CONFIGS.
+    """
+    if config_name not in MODEL_CONFIGS:
+        raise KeyError(f"Configuration '{config_name}' not found in MODEL_CONFIGS")
+    return MODEL_CONFIGS[config_name]

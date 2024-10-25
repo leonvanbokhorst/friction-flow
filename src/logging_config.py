@@ -12,7 +12,18 @@ MAX_LOG_FILES: int = 10  # Total number of log files to keep
 
 
 def setup_logging() -> None:
-    """Set up logging configuration for the application."""
+    """
+    Set up logging configuration for the application.
+
+    This function initializes the logging system, creating log directories,
+    setting up file and console handlers, and cleaning up old log files.
+
+    The log directory is determined based on whether the application is running
+    in development mode or not.
+
+    Returns:
+        None
+    """
     if IS_DEVELOPMENT:
         log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
     else:
@@ -35,7 +46,15 @@ def setup_logging() -> None:
 
 
 def _create_file_handler(log_file: str) -> logging.Handler:
-    """Create and configure a file handler for logging."""
+    """
+    Create and configure a file handler for logging.
+
+    Args:
+        log_file (str): The path to the log file.
+
+    Returns:
+        logging.Handler: A configured RotatingFileHandler instance.
+    """
     file_handler = logging.handlers.RotatingFileHandler(
         log_file, maxBytes=MAX_LOG_FILE_SIZE, backupCount=MAX_LOG_FILES - 1
     )
@@ -48,7 +67,12 @@ def _create_file_handler(log_file: str) -> logging.Handler:
 
 
 def _create_console_handler() -> logging.Handler:
-    """Create and configure a console handler for logging."""
+    """
+    Create and configure a console handler for logging.
+
+    Returns:
+        logging.Handler: A configured StreamHandler instance.
+    """
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -57,7 +81,15 @@ def _create_console_handler() -> logging.Handler:
 
 
 def _cleanup_old_logs(log_dir: str) -> None:
-    """Remove old log files if the total number exceeds MAX_LOG_FILES."""
+    """
+    Remove old log files if the total number exceeds MAX_LOG_FILES.
+
+    Args:
+        log_dir (str): The directory containing the log files.
+
+    Returns:
+        None
+    """
     log_files = glob.glob(os.path.join(log_dir, f"{APP_NAME}_*.log*"))
     log_files.sort(key=os.path.getmtime, reverse=True)
     for old_file in log_files[MAX_LOG_FILES:]:
