@@ -191,8 +191,7 @@ class PerformanceMetrics:
     def print_summary(self):
         print("\nPerformance Metrics Summary:")
         for operation, data in self.metrics.items():
-            durations = data["durations"]
-            if durations:
+            if durations := data["durations"]:
                 avg_duration = sum(durations) / len(durations)
                 min_duration = min(durations)
                 max_duration = max(durations)
@@ -284,7 +283,7 @@ class ChromaStore(VectorStore):
 
         try:
             self.collection = self.client.get_collection(collection_name)
-        except:
+        except Exception:
             self.collection = self.client.create_collection(
                 name=collection_name, metadata={"hnsw:space": "cosine"}
             )
@@ -553,10 +552,10 @@ async def demo_scenario():
         llm = LlamaInterface()
 
         vector_store: VectorStore = ChromaStore(collection_name="research_lab")
-        logger.info(f"Initialized Chroma vector store")
+        logger.info("Initialized Chroma vector store")
 
         field = NarrativeField(llm, vector_store)
-        logger.info(f"Initialized narrative field")
+        logger.info("Initialized narrative field")
 
         # Research Lab Scenario with Multiple Characters and events
         stories = [
