@@ -23,7 +23,7 @@ import psutil
 import multiprocessing as mp
 import time
 from typing import Tuple
-import gc  # Add this import at the top of your file
+import gc
 import atexit
 import torch
 import platform
@@ -32,6 +32,8 @@ from llama_cpp import llama
 import ctypes
 import sys
 
+# Local imports
+from logging_config import setup_logging
 
 # Type Definitions
 StoryID = NewType("StoryID", str)
@@ -56,37 +58,6 @@ MODEL_CONFIGS = {
         },
     },
 }
-
-
-# Logging Setup
-def setup_logging() -> None:
-    log_dir = os.path.join(os.path.dirname(__file__), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(log_dir, f"nfs_{current_time}.log")
-
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-
-    # File Handler
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=MAX_LOG_FILE_SIZE, backupCount=MAX_LOG_BACKUP_COUNT
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    file_handler.setFormatter(file_formatter)
-
-    # Console Handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter("%(asctime)s - %(message)s")
-    console_handler.setFormatter(console_formatter)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
 
 
 # Base Classes
@@ -730,7 +701,6 @@ atexit.register(global_cleanup)
 
 
 async def demo_scenario():
-    setup_logging()
     logger = logging.getLogger(__name__)
     logger.info("Starting narrative field demonstration...")
 
@@ -847,6 +817,7 @@ async def demo_scenario():
 
 if __name__ == "__main__":
     try:
+        setup_logging()  # Call the setup_logging function from the imported module
         asyncio.run(demo_scenario())
     finally:
         global_cleanup()
