@@ -10,7 +10,9 @@ from pathlib import Path
 import ollama
 import torch
 from llama_cpp import Llama
-from config import MODEL_CONFIGS
+from config import MODEL_CONFIGS as _MODEL_CONFIGS
+
+MODEL_CONFIGS = _MODEL_CONFIGS  # This line makes it easier to mock
 from embedding_cache import EmbeddingCache
 
 
@@ -43,7 +45,7 @@ def async_error_handler(func: Callable) -> Callable:
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
-        except (NetworkError, APIError) as e:
+        except Exception as e:
             raise ModelError(str(e)) from e
 
     return wrapper
