@@ -1,0 +1,12 @@
+ollama
+chromadb
+llama-cpp-python
+numpy   
+appdirs 
+pydantic
+psutil
+torch
+pytest
+pytest-asyncio
+pytest-mock
+pytest-cov
