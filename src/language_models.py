@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Dict, List
 import asyncio
@@ -9,12 +10,32 @@ import ollama
 import torch
 from llama_cpp import Llama
 from config import MODEL_CONFIGS
+from embedding_cache import EmbeddingCache, InMemoryEmbeddingCache
+
+
+class ModelInitializationError(Exception):
+    """Custom exception for model initialization errors."""
+
+    pass
+
+
+def async_error_handler(func):
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            logging.error(f"Error in {func.__name__}: {e}", exc_info=True)
+            raise
+
+    return wrapper
+
 
 class LanguageModel(ABC):
     """Abstract base class for language models."""
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.embedding_cache: EmbeddingCache = InMemoryEmbeddingCache()
 
     @abstractmethod
     async def generate(self, prompt: str) -> str:
@@ -22,106 +43,110 @@ class LanguageModel(ABC):
         pass
 
     @abstractmethod
-    async def generate_embedding(self, text: str) -> List[float]:
-        """Generate an embedding for the given text."""
+    async def _generate_embedding(self, text: str) -> List[float]:
+        """Internal method to generate an embedding."""
         pass
 
-    @abstractmethod
+    @async_error_handler
+    async def generate_embedding(self, text: str) -> List[float]:
+        """Generate an embedding for the given text."""
+        if not text:
+            self.logger.warning("Attempted to generate embedding for empty text")
+            return []
+
+        cached_embedding = self.embedding_cache.get(text)
+        if cached_embedding:
+            self.logger.info(f"Embedding found in cache for text: {text[:50]}...")
+            return cached_embedding
+
+        self.logger.info(f"Generating embedding for text: {text[:50]}...")
+        try:
+            embedding = await self._generate_embedding(text)
+            self.embedding_cache.set(text, embedding)
+            self.logger.info(f"Embedding generated and cached for text: {text[:50]}...")
+            return embedding
+        except Exception as e:
+            self.logger.error(f"Failed to generate embedding: {e}", exc_info=True)
+            raise
+
     async def cleanup(self) -> None:
         """Clean up resources used by the model."""
-        pass
+        self.logger.info(f"Cleaning up {self.__class__.__name__} resources")
+        self.embedding_cache.clear()
+        try:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            self.logger.info(f"{self.__class__.__name__} cleanup completed")
+        except Exception as e:
+            self.logger.error(f"Error cleaning up resources: {e}", exc_info=True)
+            # We don't re-raise here as cleanup errors shouldn't stop the program
 
 
 class OllamaInterface(LanguageModel):
     """Interface for the Ollama language model."""
 
     def __init__(self, quality_preset: str = "balanced"):
-        """Initialize the OllamaInterface."""
         super().__init__()
         try:
             self.chat_model_path = MODEL_CONFIGS[quality_preset]["chat"]["model_name"]
             self.embedding_model_path = MODEL_CONFIGS[quality_preset]["embedding"][
                 "model_name"
             ]
-            self.embedding_cache: Dict[int, List[float]] = {}
-            self.logger.info(
-                f"Initialized OllamaInterface with {quality_preset} preset"
-            )
         except KeyError as e:
-            self.logger.error(f"Invalid quality preset: {quality_preset}")
-            raise ValueError(f"Invalid quality preset: {quality_preset}") from e
+            raise ModelInitializationError(
+                f"Invalid quality preset or missing configuration: {e}"
+            )
 
+    @async_error_handler
     async def generate(self, prompt: str) -> str:
         """Generate a response for the given prompt."""
-        self.logger.debug(f"Generating response for prompt: {prompt}")
+        if not prompt:
+            self.logger.warning("Attempted to generate response for empty prompt")
+            return ""
+
+        self.logger.info(f"Generating response for prompt: {prompt[:50]}...")
         try:
             response = await asyncio.to_thread(
                 ollama.chat,
                 model=self.chat_model_path,
                 messages=[{"role": "user", "content": prompt}],
             )
-            self.logger.debug(f"Response from LLM: {response['message']['content']}")
+            self.logger.info("Response received from LLM")
+            self.logger.debug(f"Full response: {response['message']['content']}")
             return response["message"]["content"]
         except Exception as e:
-            self.logger.error(f"Error generating response: {e}", exc_info=True)
-            raise e
+            self.logger.error(f"Failed to generate response: {e}", exc_info=True)
+            raise
 
-    async def generate_embedding(self, text: str) -> List[float]:
-        """Generate an embedding for the given text."""
-        cache_key = hash(text)
-        if cache_key in self.embedding_cache:
-            self.logger.debug(f"Embedding found in cache for hash: {cache_key}")
-            return self.embedding_cache[cache_key]
-
-        self.logger.debug(f"Generating embedding for text: {text[:50]}...")
-        try:
-            response = await asyncio.to_thread(
-                ollama.embeddings,
-                model=self.embedding_model_path,
-                prompt=text,
-            )
-            embedding = response["embedding"]
-            self.embedding_cache[cache_key] = embedding
-            self.logger.debug(f"Embedding generated and cached for hash: {cache_key}")
-            return embedding
-        except Exception as e:
-            self.logger.error(f"Error generating embedding: {e}", exc_info=True)
-            raise e
-
-    async def cleanup(self) -> None:
-        """Clean up resources used by the model."""
-        self.logger.info("Cleaning up OllamaInterface resources")
-        self.embedding_cache.clear()
-        try:
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            self.logger.debug("OllamaInterface cleanup completed")
-        except Exception as e:
-            self.logger.error(f"Error cleaning up resources: {e}", exc_info=True)
+    async def _generate_embedding(self, text: str) -> List[float]:
+        """Internal method to generate an embedding using Ollama."""
+        response = await asyncio.to_thread(
+            ollama.embeddings,
+            model=self.embedding_model_path,
+            prompt=text,
+        )
+        return response["embedding"]
 
 
 class LlamaInterface(LanguageModel):
     """Interface for the Llama language model."""
 
     def __init__(self, quality_preset: str = "balanced"):
-        """Initialize the LlamaInterface."""
         super().__init__()
         try:
-            self.quality_preset = quality_preset
             self.chat_model_path = MODEL_CONFIGS[quality_preset]["chat"]["path"]
             self.embedding_model_path = MODEL_CONFIGS[quality_preset]["embedding"][
                 "path"
             ]
             self.optimal_config = MODEL_CONFIGS[quality_preset]["optimal_config"]
-            self.embedding_cache: Dict[int, List[float]] = {}
-            self.llm: Llama | None = None
-            self.embedding_model: Llama | None = None
-            self.setup_models()
-            self.logger.info(f"Initialized LlamaInterface with {quality_preset} preset")
         except KeyError as e:
-            self.logger.error(f"Invalid quality preset: {quality_preset}")
-            raise ValueError(f"Invalid quality preset: {quality_preset}") from e
+            raise ModelInitializationError(
+                f"Invalid quality preset or missing configuration: {e}"
+            )
+        self.llm: Llama | None = None
+        self.embedding_model: Llama | None = None
+        self.setup_models()
 
     def setup_models(self) -> None:
         """Set up the language models."""
@@ -141,46 +166,43 @@ class LlamaInterface(LanguageModel):
             self.logger.info("Llama models set up successfully")
         except Exception as e:
             self.logger.error(f"Failed to load models: {e}", exc_info=True)
-            raise e
+            raise ModelInitializationError(f"Failed to initialize Llama models: {e}")
 
+    @async_error_handler
     async def generate(self, prompt: str) -> str:
         """Generate a response for the given prompt."""
-        self.logger.debug(f"Generating response for prompt: {prompt}")
+        if not prompt:
+            self.logger.warning("Attempted to generate response for empty prompt")
+            return ""
+
+        if not self.llm:
+            raise ModelInitializationError("Llama model not initialized")
+
+        self.logger.info(f"Generating response for prompt: {prompt[:50]}...")
         try:
             response = await asyncio.to_thread(
                 self.llm.create_chat_completion,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self.logger.info("Response received from LLM")
             self.logger.debug(
-                f"Response from LLM: {response['choices'][0]['message']['content']}"
+                f"Full response: {response['choices'][0]['message']['content']}"
             )
             return response["choices"][0]["message"]["content"]
         except Exception as e:
-            self.logger.error(f"Error generating response: {e}", exc_info=True)
-            raise e
+            self.logger.error(f"Failed to generate response: {e}", exc_info=True)
+            raise
 
-    async def generate_embedding(self, text: str) -> List[float]:
-        """Generate an embedding for the given text."""
-        self.logger.debug(f"Generating embedding for text: {text[:50]}...")
-        try:
-            embedding = await asyncio.to_thread(self.embedding_model.embed, text)
-            self.logger.debug(f"Embedding generated successfully")
-            return embedding
-        except Exception as e:
-            self.logger.error(f"Error generating embedding: {e}", exc_info=True)
-            raise e
+    async def _generate_embedding(self, text: str) -> List[float]:
+        """Internal method to generate an embedding using Llama."""
+        if not self.embedding_model:
+            raise ModelInitializationError("Embedding model not initialized")
+        return await asyncio.to_thread(self.embedding_model.embed, text)
 
     async def cleanup(self) -> None:
         """Clean up resources used by the model."""
-        self.logger.info("Cleaning up LlamaInterface resources")
-        try:
-            if self.llm:
-                del self.llm
-            if self.embedding_model:
-                del self.embedding_model
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            self.logger.debug("LlamaInterface cleanup completed")
-        except Exception as e:
-            self.logger.error(f"Error cleaning up resources: {e}", exc_info=True)
+        await super().cleanup()
+        if self.llm:
+            del self.llm
+        if self.embedding_model:
+            del self.embedding_model
