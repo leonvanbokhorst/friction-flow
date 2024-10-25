@@ -96,14 +96,12 @@ class LanguageModel(ABC):
 
     @async_error_handler
     async def generate_embedding(self, text: str) -> List[float]:
-        # sourcery skip: use-named-expression
         """Generate an embedding for the given text."""
         if not text:
             self.logger.warning("Attempted to generate embedding for empty text")
             return []
 
-        cached_embedding = self.embedding_cache.get(text)
-        if cached_embedding:
+        if cached_embedding := self.embedding_cache.get(text):
             self.logger.info(f"Embedding found in cache for text: {text[:50]}...")
             return cached_embedding
 
@@ -319,3 +317,4 @@ class LlamaInterface(LanguageModel):
             del self.llm
         if self.embedding_model:
             del self.embedding_model
+

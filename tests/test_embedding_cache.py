@@ -43,3 +43,28 @@ def test_multiple_sets_same_key(cache):
     
     # Verify that the most recent value is retrieved
     assert cache.get(key) == value2
+
+def test_len(cache):
+    assert len(cache) == 0
+    cache.set("key1", [1.0, 2.0])
+    assert len(cache) == 1
+    cache.set("key2", [3.0, 4.0])
+    assert len(cache) == 2
+
+def test_contains(cache):
+    cache.set("existing_key", [1.0, 2.0])
+    assert "existing_key" in cache
+    assert "non_existing_key" not in cache
+
+def test_update(cache):
+    initial_data = {"key1": [1.0, 2.0], "key2": [3.0, 4.0]}
+    cache.update(initial_data)
+    assert cache.get("key1") == [1.0, 2.0]
+    assert cache.get("key2") == [3.0, 4.0]
+
+    # Test updating existing and adding new key
+    update_data = {"key2": [5.0, 6.0], "key3": [7.0, 8.0]}
+    cache.update(update_data)
+    assert cache.get("key1") == [1.0, 2.0]  # Unchanged
+    assert cache.get("key2") == [5.0, 6.0]  # Updated
+    assert cache.get("key3") == [7.0, 8.0]  # Newly added

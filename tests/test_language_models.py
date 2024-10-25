@@ -86,13 +86,17 @@ class TestLanguageModel:
 
     @pytest.mark.asyncio
     async def test_generate_embedding_cached(self, concrete_language_model):
-        # Test when the embedding is already in the cache
         text = "Test text"
         cached_embedding = [0.4, 0.5, 0.6]
         concrete_language_model.embedding_cache.get.return_value = cached_embedding
+
+        # Spy on the _generate_embedding method
+        with patch.object(concrete_language_model, '_generate_embedding', wraps=concrete_language_model._generate_embedding) as mock_generate_embedding:
+            result = await concrete_language_model.generate_embedding(text)
+            
+            assert result == cached_embedding
+            mock_generate_embedding.assert_not_called()
         
-        result = await concrete_language_model.generate_embedding(text)
-        assert result == cached_embedding
         # No need to check if set() was called, as it shouldn't be for cached results
 
     @pytest.mark.asyncio
@@ -158,6 +162,49 @@ class TestOllamaInterface:
             model="test_embedding_model", prompt="Test text"
         )
 
+    @pytest.mark.asyncio
+    async def test_generate_network_error(self, mock_ollama, mock_config):
+        ollama_interface = OllamaInterface()
+        mock_ollama.chat.side_effect = Exception("Network error")
+
+        with pytest.raises(ModelError) as exc_info:
+            await ollama_interface.generate("Test prompt")
+        assert "Failed to generate response" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_generate_invalid_response(self, mock_ollama, mock_config):
+        ollama_interface = OllamaInterface()
+        mock_ollama.chat.return_value = {"invalid_key": "Invalid response"}
+
+        with pytest.raises(ModelError) as exc_info:
+            await ollama_interface.generate("Test prompt")
+        assert "Failed to generate response: 'message'" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_network_error(self, mock_ollama, mock_config):
+        ollama_interface = OllamaInterface()
+        mock_ollama.embeddings.side_effect = Exception("Network error")
+
+        with pytest.raises(ModelError) as exc_info:
+            await ollama_interface.generate_embedding("Test text")
+        assert "Network error" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_invalid_response(self, mock_ollama, mock_config):
+        ollama_interface = OllamaInterface()
+        mock_ollama.embeddings.return_value = {"invalid_key": "Invalid response"}
+
+        with pytest.raises(ModelError) as exc_info:
+            await ollama_interface.generate_embedding("Test text")
+        assert "'embedding'" in str(exc_info.value)
+
+    def test_init_ollama_not_running(self, mock_ollama, mock_config):
+        mock_ollama.ps.side_effect = Exception("Ollama not running")
+
+        with pytest.raises(ModelInitializationError) as exc_info:
+            OllamaInterface()
+        assert "Failed to start Ollama: Ollama not running" in str(exc_info.value)
+
 
 class TestLlamaInterface:
     @pytest.mark.asyncio
@@ -213,6 +260,40 @@ class TestLlamaInterface:
         assert not hasattr(llama_interface, 'llm')
         assert not hasattr(llama_interface, 'embedding_model')
 
+    @pytest.mark.asyncio
+    async def test_generate_model_error(self, mock_llama, mock_config):
+        llama_interface = LlamaInterface()
+        mock_llama.return_value.create_chat_completion.side_effect = Exception("Model error")
+
+        with pytest.raises(ModelError) as exc_info:
+            await llama_interface.generate("Test prompt")
+        assert "Failed to generate response" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_generate_invalid_response(self, mock_llama, mock_config):
+        llama_interface = LlamaInterface()
+        mock_llama.return_value.create_chat_completion.return_value = {"invalid_key": "Invalid response"}
+
+        with pytest.raises(ModelError) as exc_info:
+            await llama_interface.generate("Test prompt")
+        assert "Failed to generate response: 'choices'" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_model_error(self, mock_llama, mock_config):
+        llama_interface = LlamaInterface()
+        mock_llama.return_value.embed.side_effect = Exception("Model error")
+
+        with pytest.raises(ModelError) as exc_info:
+            await llama_interface.generate_embedding("Test text")
+        assert "Model error" in str(exc_info.value)
+
+    def test_init_model_load_error(self, mock_llama, mock_config):
+        mock_llama.side_effect = Exception("Failed to load model")
+
+        with pytest.raises(ModelInitializationError) as exc_info:
+            LlamaInterface()
+        assert "Failed to initialize models: Failed to load model with llama_cpp config:" in str(exc_info.value)
+
 
 @pytest.mark.asyncio
 async def test_model_error():
@@ -265,3 +346,5 @@ def test_model_initialization_error(mock_config):
 
     with pytest.raises(ModelInitializationError):
         LlamaInterface(quality_preset="invalid_preset")
+
+
