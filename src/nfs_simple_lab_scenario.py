@@ -550,7 +550,7 @@ async def demo_scenario():
         # Perform global cleanup before initializing new LLM
         global_cleanup()
 
-        llm = LlamaInterface()
+        llm = OllamaInterface()
 
         vector_store: VectorStore = ChromaStore(collection_name="research_lab")
         logger.info(f"Initialized Chroma vector store")
@@ -621,9 +621,7 @@ async def demo_scenario():
         logger.info(f"Processing {len(stories)} stories and analyzing field effects...")
         for story in stories:
             try:
-                response, metrics = await monitor.monitor_generation(
-                    llm, story["content"]
-                )
+                metrics = await monitor.monitor_generation(llm, story["content"])
                 logger.debug(f"Story processing metrics: {metrics}")
 
                 await field.add_story(story["content"], story["context"])

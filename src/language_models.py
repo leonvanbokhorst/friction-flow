@@ -1,9 +1,10 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import List, Callable
 import asyncio
 import gc
 import logging
+from functools import wraps
 from pathlib import Path
 
 import ollama
@@ -13,19 +14,37 @@ from config import MODEL_CONFIGS
 from embedding_cache import EmbeddingCache, InMemoryEmbeddingCache
 
 
+class NetworkError(Exception):
+    """Custom exception for network errors."""
+
+    pass
+
+
+class ModelError(Exception):
+    """Custom exception for model errors."""
+
+    pass
+
+
+class APIError(Exception):
+    """Custom exception for API errors."""
+
+    pass
+
+
 class ModelInitializationError(Exception):
     """Custom exception for model initialization errors."""
 
     pass
 
 
-def async_error_handler(func):
+def async_error_handler(func: Callable) -> Callable:
+    @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
-        except Exception as e:
-            logging.error(f"Error in {func.__name__}: {e}", exc_info=True)
-            raise
+        except (NetworkError, APIError) as e:
+            raise ModelError(str(e)) from e
 
     return wrapper
 
@@ -35,6 +54,7 @@ class LanguageModel(ABC):
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.info(f"Initializing {self.__class__.__name__}")
         self.embedding_cache: EmbeddingCache = InMemoryEmbeddingCache()
 
     @abstractmethod
@@ -80,7 +100,6 @@ class LanguageModel(ABC):
             self.logger.info(f"{self.__class__.__name__} cleanup completed")
         except Exception as e:
             self.logger.error(f"Error cleaning up resources: {e}", exc_info=True)
-            # We don't re-raise here as cleanup errors shouldn't stop the program
 
 
 class OllamaInterface(LanguageModel):
@@ -89,14 +108,28 @@ class OllamaInterface(LanguageModel):
     def __init__(self, quality_preset: str = "balanced"):
         super().__init__()
         try:
-            self.chat_model_path = MODEL_CONFIGS[quality_preset]["chat"]["model_name"]
-            self.embedding_model_path = MODEL_CONFIGS[quality_preset]["embedding"][
+            self.chat_model_name = MODEL_CONFIGS[quality_preset]["chat"]["model_name"]
+            self.embedding_model_name = MODEL_CONFIGS[quality_preset]["embedding"][
                 "model_name"
             ]
+            self._setup_models()
         except KeyError as e:
             raise ModelInitializationError(
                 f"Invalid quality preset or missing configuration: {e}"
-            )
+            ) from e
+
+    def _setup_models(self) -> None:
+        """Set up the language models."""
+        self.logger.info(f"Setting up Ollama models for {self.chat_model_name}")
+        self.logger.info(
+            f"Setting up Ollama embedding model for {self.embedding_model_name}"
+        )
+        try:
+            self.logger.info("Starting Ollama")
+            ollama.ps()
+            self.logger.info("Ollama started successfully")
+        except Exception as e:
+            raise ModelInitializationError(f"Failed to start Ollama: {e}") from e
 
     @async_error_handler
     async def generate(self, prompt: str) -> str:
@@ -109,7 +142,7 @@ class OllamaInterface(LanguageModel):
         try:
             response = await asyncio.to_thread(
                 ollama.chat,
-                model=self.chat_model_path,
+                model=self.chat_model_name,
                 messages=[{"role": "user", "content": prompt}],
             )
             self.logger.info("Response received from LLM")
@@ -117,13 +150,13 @@ class OllamaInterface(LanguageModel):
             return response["message"]["content"]
         except Exception as e:
             self.logger.error(f"Failed to generate response: {e}", exc_info=True)
-            raise
+            raise ModelError(f"Failed to generate response: {e}") from e
 
     async def _generate_embedding(self, text: str) -> List[float]:
         """Internal method to generate an embedding using Ollama."""
         response = await asyncio.to_thread(
             ollama.embeddings,
-            model=self.embedding_model_path,
+            model=self.embedding_model_name,
             prompt=text,
         )
         return response["embedding"]
@@ -140,18 +173,23 @@ class LlamaInterface(LanguageModel):
                 "path"
             ]
             self.optimal_config = MODEL_CONFIGS[quality_preset]["optimal_config"]
+            self.llm: Llama | None = None
+            self.embedding_model: Llama | None = None
+            self._setup_models()
         except KeyError as e:
             raise ModelInitializationError(
                 f"Invalid quality preset or missing configuration: {e}"
-            )
-        self.llm: Llama | None = None
-        self.embedding_model: Llama | None = None
-        self.setup_models()
+            ) from e
 
-    def setup_models(self) -> None:
+    def _setup_models(self) -> None:
         """Set up the language models."""
+        chat_model_filename = Path(self.chat_model_path).name
+        embedding_model_filename = Path(self.embedding_model_path).name
+        
+        self.logger.info(f"Setting up Llama chat model: {chat_model_filename}")
+        self.logger.info(f"Setting up Llama embedding model: {embedding_model_filename}")
+        
         try:
-            self.logger.info("Setting up Llama models")
             self.llm = Llama(
                 model_path=str(self.chat_model_path),
                 verbose=False,
@@ -163,10 +201,11 @@ class LlamaInterface(LanguageModel):
                 verbose=False,
                 **self.optimal_config,
             )
-            self.logger.info("Llama models set up successfully")
         except Exception as e:
             self.logger.error(f"Failed to load models: {e}", exc_info=True)
-            raise ModelInitializationError(f"Failed to initialize Llama models: {e}")
+            raise ModelInitializationError(
+                f"Failed to initialize models: {e} with llama_cpp config: {self.optimal_config} "
+            ) from e
 
     @async_error_handler
     async def generate(self, prompt: str) -> str:
@@ -191,7 +230,7 @@ class LlamaInterface(LanguageModel):
             return response["choices"][0]["message"]["content"]
         except Exception as e:
             self.logger.error(f"Failed to generate response: {e}", exc_info=True)
-            raise
+            raise ModelError(f"Failed to generate response: {e}") from e
 
     async def _generate_embedding(self, text: str) -> List[float]:
         """Internal method to generate an embedding using Llama."""
