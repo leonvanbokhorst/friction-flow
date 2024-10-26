@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class Memory:
+    timestamp: float
+    interaction_type: str
+    resonance: float
+    themes: List[str]
+    emotional_impact: float
+    partner_id: Optional[str] = None
+
+
+@dataclass
 class StoryState:
     """Captures the evolving state of a story over time"""
 
@@ -32,9 +42,9 @@ class StoryState:
     active_themes: List[str] = field(default_factory=list)
     interaction_count: int = 0
 
-    def update(self, resonance: float, new_themes: List[str]):
-        self.resonance_level = 0.8 * self.resonance_level + 0.2 * resonance
-        self.active_themes.extend(new_themes)
+    def update(self, memory: Memory):
+        self.resonance_level = 0.8 * self.resonance_level + 0.2 * memory.resonance
+        self.active_themes.extend(memory.themes)
         self.interaction_count += 1
 
 
@@ -217,7 +227,8 @@ class Story(BaseClass):
         self.velocity = velocity if velocity is not None else np.zeros(3)
         self.emotional_state = emotional_state
         self.previous_emotional_state = None
-        self.memory_layer = []
+        self.memory_layer: List[Memory] = []
+        self.memory_state = StoryState()
         self.resonance_history = []
         self.total_perspective_shift = 0.0
         self.perspective_shifts = []
@@ -310,13 +321,14 @@ class Story(BaseClass):
         await self.emotional_state.update(interaction_strength=intensity * 0.2)
 
         # Add a memory of the event
-        memory = {
-            "type": "environmental_event",
-            "event_name": event.get("name", "Unknown Event"),
-            "intensity": intensity,
-            "timestamp": self.field.time,
-        }
-        self.memory_layer.append(memory)
+        memory = Memory(
+            timestamp=self.field.time,
+            interaction_type="environmental_event",
+            resonance=intensity,
+            themes=[],
+            emotional_impact=intensity * 0.2
+        )
+        self.add_memory(memory)
 
         return intensity
 
@@ -328,6 +340,10 @@ class Story(BaseClass):
             shift  # Small perspective update based on average shift
         )
         return shift
+
+    def add_memory(self, memory: Memory):
+        self.memory_layer.append(memory)
+        self.memory_state.update(memory)
 
 
 class NarrativeFieldViz(BaseClass):
@@ -575,11 +591,11 @@ class EnhancedCollectiveStoryEngine(BaseClass):
             recent_memories = story.memory_layer[-5:]  # Get the 5 most recent memories
             if recent_memories:
                 avg_resonance = np.mean(
-                    [m.get("resonance", 0) for m in recent_memories]
+                    [m.resonance for m in recent_memories]
                 )
                 perspective_shifts = []
                 for m in recent_memories:
-                    shift = m.get("perspective_shift", 0)
+                    shift = m.emotional_impact
                     if asyncio.iscoroutine(shift):
                         shift = await shift
                     perspective_shifts.append(shift)
@@ -716,16 +732,16 @@ class EnhancedInteractionEngine(BaseInteractionEngine):
                 story2, interaction_type, resonance, self.llm
             )
 
-            # Add memory of interaction
-            memory = {
-                "type": "interaction",
-                "partner_id": story2.id,
-                "resonance": resonance,
-                "interaction_type": interaction_type,
-                "perspective_shift": perspective_shift,
-                "timestamp": self.field.time,
-            }
-            story1.memory_layer.append(memory)
+            # Create and add memory
+            memory = Memory(
+                timestamp=self.field.time,
+                interaction_type=interaction_type,
+                resonance=resonance,
+                themes=list(set(story1.themes) & set(story2.themes)),
+                emotional_impact=emotional_change,
+                partner_id=story2.id
+            )
+            story1.add_memory(memory)
 
             return resonance, interaction_type
         return 0, None
@@ -751,12 +767,8 @@ class EnhancedJourneyLogger(BaseClass):
         self.emotional_history = {}
 
     def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
-        latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
-        perspective_shift = latest_memory.get("perspective_shift", 0)
-
-        # Handle coroutine perspective_shift if necessary
-        if asyncio.iscoroutine(perspective_shift):
-            perspective_shift = asyncio.get_event_loop().run_until_complete(perspective_shift)
+        latest_memory = story1.memory_layer[-1] if story1.memory_layer else None
+        perspective_shift = latest_memory.emotional_impact if latest_memory else 0
 
         log_entry = (
             f"Interaction between {story1.id} and {story2.id}:\n"
@@ -871,7 +883,7 @@ class EnhancedJourneyLogger(BaseClass):
 
         theme_counts = {}
         for memory in story.memory_layer:
-            for theme in memory.get("themes", []):
+            for theme in memory.themes:
                 theme_counts[theme] = theme_counts.get(theme, 0) + 1
 
         most_influential_themes = sorted(
@@ -880,7 +892,7 @@ class EnhancedJourneyLogger(BaseClass):
 
         return {
             "total_memories": len(story.memory_layer),
-            "unique_interactions": len(set(m.get("partner_id") for m in story.memory_layer if "partner_id" in m)),
+            "unique_interactions": len(set(m.partner_id for m in story.memory_layer if m.partner_id is not None)),
             "theme_exposure": theme_counts,
             "total_perspective_shift": story.total_perspective_shift,
             "most_influential_themes": most_influential_themes,
