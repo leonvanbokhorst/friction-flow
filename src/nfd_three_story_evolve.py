@@ -171,38 +171,10 @@ class Story:
         self.position = position if position is not None else np.random.randn(3)
         self.velocity = velocity if velocity is not None else np.zeros(3)
 
-    def update_perspective(self, other: "Story", theme_impact: float, resonance: float):
-        """Update perspective with accumulation"""
-        # Calculate influence factors
-        theme_weight = theme_impact * 0.2
-        resonance_weight = resonance * 0.3
-        
-        # Factor in emotional impact
-        emotional_influence = self._calculate_emotional_influence(other)
-        total_weight = min(0.6, theme_weight + resonance_weight + emotional_influence)
-
-        # Calculate new perspective
-        new_perspective = (
-            1 - total_weight
-        ) * self.perspective_filter + total_weight * other.perspective_filter
-
-        # Calculate shift magnitude
-        shift = float(np.sum(np.abs(new_perspective - self.perspective_filter)))
-
-        # Update accumulators
-        self.total_perspective_shift += shift
-        self.perspective_shifts.append(
-            {
-                "interaction_with": other.id,
-                "magnitude": shift,
-                "theme_impact": theme_impact,
-                "resonance": resonance,
-            }
-        )
-
-        # Store new perspective
-        self.perspective_filter = new_perspective
-
+    def update_perspective(self, other: "Story", theme_impact: float, resonance: float, emotional_change):
+        shift = theme_impact * resonance * sum(emotional_change.values())
+        self.perspective_filter += shift * (other.embedding - self.embedding)
+        self.total_perspective_shift += abs(shift)
         return shift
 
     def _calculate_emotional_influence(self, other: "Story") -> float:
@@ -261,6 +233,31 @@ class Story:
         )
         
         return total_change
+
+    def decay_emotions(self, decay_rate=0.01):
+        for emotion in vars(self.emotional_state):
+            current_value = getattr(self.emotional_state, emotion)
+            decayed_value = max(0, current_value - decay_rate)
+            setattr(self.emotional_state, emotion, decayed_value)
+
+    def check_emotional_thresholds(self):
+        if self.emotional_state.joy > 0.9:
+            self.trigger_joyful_event()
+        elif self.emotional_state.sadness > 0.8:
+            self.trigger_melancholy_event()
+
+    def evolve_themes(self, interaction_history):
+        new_themes = set()
+        for interaction in interaction_history[-10:]:  # Consider last 10 interactions
+            if interaction['resonance'] > 0.5:
+                new_themes.update(interaction['themes_gained'])
+        self.themes = list(set(self.themes) | new_themes)[:5]  # Keep top 5 themes
+
+    def calculate_interaction_strength(self, other_story):
+        base_strength = self.field.detect_resonance(self, other_story)
+        interaction_history = self.get_interaction_history(other_story)
+        familiarity_bonus = min(0.2, len(interaction_history) * 0.02)
+        return base_strength + familiarity_bonus
 
 
 class NarrativeFieldViz:
@@ -377,6 +374,10 @@ class NarrativeField:
             self.field_potential += story.embedding * np.exp(
                 -np.linalg.norm(story.position) / 10.0
             )
+
+    def apply_environmental_event(self, event_type, intensity):
+        for story in self.stories:
+            story.respond_to_environmental_event(event_type, intensity)
 
 
 class StoryPhysics:
@@ -572,10 +573,10 @@ class StoryInteractionEngine:
         if resonance > self.memory_threshold:
             # Update perspectives
             shift1 = story1.update_perspective(
-                story2, theme_analysis["theme_impact"], resonance
+                story2, theme_analysis["theme_impact"], resonance, self._calculate_emotional_change(story1)
             )
             shift2 = story2.update_perspective(
-                story1, theme_analysis["theme_impact"], resonance
+                story1, theme_analysis["theme_impact"], resonance, self._calculate_emotional_change(story2)
             )
 
             self.logger.info(
