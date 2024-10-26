@@ -1,3 +1,10 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import List, Dict
+    from .story import Story  # Assuming Story is defined in a separate file
+
 import sys
 from pathlib import Path
 import logging
@@ -95,6 +102,24 @@ class ThemeRelationshipMap(BaseClass):
             if theme1 in group and theme2 in group
         )
         return 0.3 * shared_groups if shared_groups > 0 else 0.1
+
+
+class ThemeEvolutionEngine(BaseClass):
+    """Handles theme evolution and perspective shifts"""
+
+    def __init__(self):
+        super().__init__()
+        self.theme_resonance = {}  # Track theme relationships
+
+    def update_theme_resonance(self, theme: str, resonance: float):
+        self.theme_resonance[theme] = resonance
+
+    def evolve_themes(self, story: 'Story', interaction_history):
+        new_themes = set()
+        for interaction in interaction_history[-10:]:  # Consider last 10 interactions
+            if interaction["resonance"] > 0.5:
+                new_themes.update(interaction["themes_gained"])
+        story.themes = list(set(story.themes) | new_themes)[:5]  # Keep top 5 themes
 
 
 class StoryPerspective(BaseClass):
@@ -301,11 +326,7 @@ class Story(BaseClass):
             self.trigger_melancholy_event()
 
     def evolve_themes(self, interaction_history):
-        new_themes = set()
-        for interaction in interaction_history[-10:]:  # Consider last 10 interactions
-            if interaction["resonance"] > 0.5:
-                new_themes.update(interaction["themes_gained"])
-        self.themes = list(set(self.themes) | new_themes)[:5]  # Keep top 5 themes
+        self.field.theme_manager.evolve_themes(self, interaction_history)
 
     def calculate_interaction_strength(self, other_story):
         base_strength = self.field.detect_resonance(self, other_story)
@@ -396,6 +417,7 @@ class NarrativeField(BaseClass):
         self.resonance_threshold = 0.2  # Lower threshold to allow more interactions
         self.interaction_range = 3.0  # Increased range
         self.field_potential = np.zeros(dimension)
+        self.theme_manager = ThemeManager()
 
     def detect_resonance(self, story1: Story, story2: Story) -> float:
         """Calculate resonance between two stories"""
@@ -664,12 +686,27 @@ class EnhancedCollectiveStoryEngine(BaseClass):
         return f"Story {story.id} resonates with {', '.join(story.themes[:3])}, its journey marked by {len(story.memory_layer)} memories."
 
 
-class ThemeEvolutionEngine(BaseClass):
-    """Handles theme evolution and perspective shifts"""
-
+class ThemeManager(BaseClass):
     def __init__(self):
         super().__init__()
-        self.theme_resonance = {}  # Track theme relationships
+        self.relationship_map = ThemeRelationshipMap()
+        self.evolution_engine = ThemeEvolutionEngine()
+
+    async def process_theme_interaction(self, story1: Story, story2: Story):
+        shared_themes = set(story1.themes) & set(story2.themes)
+        theme_impact = len(shared_themes) / max(len(story1.themes), len(story2.themes))
+        
+        for theme in shared_themes:
+            resonance = self.relationship_map.get_theme_resonance(theme, theme)
+            self.evolution_engine.update_theme_resonance(theme, resonance)
+        
+        return theme_impact
+
+    def get_theme_resonance(self, theme1: str, theme2: str) -> float:
+        return self.relationship_map.get_theme_resonance(theme1, theme2)
+
+    def evolve_themes(self, story: Story, interaction_history):
+        self.evolution_engine.evolve_themes(story, interaction_history)
 
 
 class BaseInteractionEngine(BaseClass):
@@ -721,7 +758,7 @@ class EnhancedInteractionEngine(BaseInteractionEngine):
         resonance = self.field.detect_resonance(story1, story2)
 
         if resonance > self.field.resonance_threshold:
-            theme_impact = self.calculate_theme_impact(story1, story2)
+            theme_impact = await self.field.theme_manager.process_theme_interaction(story1, story2)
             emotional_change = self._calculate_emotional_influence(story1, story2)
 
             perspective_shift = await story1.update_perspective(
