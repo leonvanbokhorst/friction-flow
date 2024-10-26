@@ -647,82 +647,50 @@ class ThemeEvolutionEngine(BaseClass):
         self.theme_resonance = {}  # Track theme relationships
 
 
-class EnhancedInteractionEngine(BaseClass):
-    # ... (other methods remain the same)
-
-    async def process_interaction(self, story1: Story, story2: Story):
-        if story1.id == story2.id:
-            return  # Prevent a story from interacting with itself
-
-        interaction_type = await self.determine_interaction_type(story1, story2)
-        resonance = self.field.detect_resonance(story1, story2)
-
-        if resonance > self.field.resonance_threshold:
-            theme_impact = self.calculate_theme_impact(story1, story2)
-            emotional_change = self._calculate_emotional_influence(story1, story2)
-
-            perspective_shift = await story1.update_perspective(
-                story2, theme_impact, resonance, emotional_change, interaction_type
-            )
-
-            await story1.update_emotional_state(
-                story2, interaction_type, resonance, self.llm
-            )
-
-            # Add memory of interaction
-            memory = {
-                "type": "interaction",
-                "partner_id": story2.id,
-                "resonance": resonance,
-                "interaction_type": interaction_type,
-                "perspective_shift": perspective_shift,  # This is now awaited
-                "timestamp": self.field.time,
-            }
-            story1.memory_layer.append(memory)
-
-            return resonance, interaction_type
-        return 0, None
-
-    # ... (rest of the class remains the same)
-
-
-class StoryInteractionEngine(BaseClass):
+class BaseInteractionEngine(BaseClass):
     def __init__(self, field: NarrativeField):
         super().__init__()
         self.field = field
 
+    async def process_interaction(self, story1: Story, story2: Story):
+        # Base implementation
+        raise NotImplementedError("Subclasses must implement process_interaction")
+
+
+class StoryInteractionEngine(BaseInteractionEngine):
     async def process_interaction(self, story1: Story, story2: Story):
         # Basic interaction processing
         resonance = self.field.detect_resonance(story1, story2)
         if resonance > self.field.resonance_threshold:
             # Perform basic interaction logic here
             pass
+        return resonance, None
 
 
-class EnhancedInteractionEngine(StoryInteractionEngine):
+class EnhancedInteractionEngine(BaseInteractionEngine):
     def __init__(self, field: NarrativeField, llm: LanguageModel):
         super().__init__(field)
         self.llm = llm
-        self.logger = logging.getLogger(__name__)
 
     async def determine_interaction_type(self, story1: Story, story2: Story) -> str:
-        prompt = f"""
-        Story 1 Themes: {', '.join(story1.themes)}
-        Story 1 Emotional State: {story1.emotional_state}
-        
-        Story 2 Themes: {', '.join(story2.themes)}
-        Story 2 Emotional State: {story2.emotional_state}
-        
-        Based on the themes and emotional states of these two stories, what type of interaction might occur between them?
-        Choose from: collaboration, conflict, inspiration, reflection, transformation, challenge, or synthesis.
-        
-        Respond only with one chosen interaction type as a SINGLE WORD response.
-        """
-        return await self.llm.generate(prompt)
+        # Calculate the similarity between the stories' themes
+        shared_themes = set(story1.themes) & set(story2.themes)
+        theme_similarity = len(shared_themes) / max(len(story1.themes), len(story2.themes))
+
+        # Calculate emotional state similarity
+        emotional_similarity = self.field._calculate_emotional_similarity(story1, story2)
+
+        # Determine interaction type based on similarities
+        if theme_similarity > 0.5 and emotional_similarity > 0.5:
+            return "collaboration"
+        elif theme_similarity < 0.2 and emotional_similarity < 0.2:
+            return "conflict"
+        else:
+            return "neutral"
 
     async def process_interaction(self, story1: Story, story2: Story):
         if story1.id == story2.id:
-            return  # Prevent a story from interacting with itself
+            return 0, None  # Prevent a story from interacting with itself
 
         interaction_type = await self.determine_interaction_type(story1, story2)
         resonance = self.field.detect_resonance(story1, story2)
@@ -745,7 +713,7 @@ class EnhancedInteractionEngine(StoryInteractionEngine):
                 "partner_id": story2.id,
                 "resonance": resonance,
                 "interaction_type": interaction_type,
-                "perspective_shift": perspective_shift,  # This is now awaited
+                "perspective_shift": perspective_shift,
                 "timestamp": self.field.time,
             }
             story1.memory_layer.append(memory)
