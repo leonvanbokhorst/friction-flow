@@ -171,8 +171,20 @@ class Story:
         self.position = position if position is not None else np.random.randn(3)
         self.velocity = velocity if velocity is not None else np.zeros(3)
 
-    def update_perspective(self, other: "Story", theme_impact: float, resonance: float, emotional_change):
-        shift = theme_impact * resonance * sum(emotional_change.values())
+    def update_perspective(self, other: "Story", theme_impact: float, resonance: float, 
+                           emotional_change: Dict[str, float], interaction_type: str) -> float:
+        base_shift = theme_impact * resonance * sum(emotional_change.values())
+        
+        # Adjust shift based on interaction type
+        if interaction_type == "collaboration":
+            shift = base_shift * 1.2  # Enhance shift for collaborative interactions
+        elif interaction_type == "conflict":
+            shift = base_shift * 0.8  # Reduce shift for conflicting interactions
+        elif interaction_type == "inspiration":
+            shift = base_shift * 1.5  # Significantly enhance shift for inspirational interactions
+        else:  # reflection
+            shift = base_shift  # No change for reflective interactions
+        
         self.perspective_filter += shift * (other.embedding - self.embedding)
         self.total_perspective_shift += abs(shift)
         return shift
@@ -182,8 +194,7 @@ class Story:
         intensity = np.mean([getattr(self.emotional_state, e) for e in vars(self.emotional_state)])
         return similarity * intensity * 0.1
 
-    def update_emotional_state(self, interaction_impact: float, other_story: 'Story'):
-        """Update emotional state based on interaction impact and themes"""
+    def update_emotional_state(self, interaction_impact: float, other_story: 'Story', interaction_type: str) -> float:
         self.previous_emotional_state = EmotionalState(**vars(self.emotional_state))
         
         # Calculate theme-based emotional changes
@@ -208,6 +219,18 @@ class Story:
             elif theme in ["nature", "guidance"]:
                 hope_change += 0.05
                 fear_change -= 0.02  # Nature and guidance reduce fear slightly
+
+        # Adjust emotional changes based on interaction type
+        if interaction_type == "collaboration":
+            joy_change *= 1.2
+            hope_change *= 1.2
+        elif interaction_type == "conflict":
+            sadness_change *= 1.2
+            fear_change *= 1.2
+        elif interaction_type == "inspiration":
+            curiosity_change *= 1.5
+            hope_change *= 1.3
+        # No changes for "reflection" type
 
         # Apply resonance-based amplification
         resonance = self.field.detect_resonance(self, other_story)
@@ -555,41 +578,46 @@ class ThemeEvolutionEngine:
 
 
 class StoryInteractionEngine:
-    """Enhanced interaction engine with better memory formation"""
+    """Enhanced interaction engine with more nuanced and impactful interactions"""
 
     def __init__(self, field: NarrativeField):
         self.field = field
         self.logger = logging.getLogger(__name__)
         self.interaction_count = 0
-        self.memory_threshold = 0.2  # Lower threshold for memory formation
+        self.memory_threshold = 0.2
         self.theme_engine = ThemeEvolutionEngine()
+        self.interaction_types = [
+            "collaboration", "conflict", "inspiration", "reflection"
+        ]
 
     def process_interaction(self, story1: Story, story2: Story):
         resonance = self.field.detect_resonance(story1, story2)
-        theme_analysis = self.theme_engine.process_interaction(
-            story1, story2, resonance
-        )
-
+        theme_analysis = self.theme_engine.process_interaction(story1, story2, resonance)
+        
         if resonance > self.memory_threshold:
-            # Update perspectives
+            interaction_type = self._determine_interaction_type(story1, story2)
+            
+            # Update perspectives with interaction type influence
             shift1 = story1.update_perspective(
-                story2, theme_analysis["theme_impact"], resonance, self._calculate_emotional_change(story1)
+                story2, theme_analysis["theme_impact"], resonance, 
+                self._calculate_emotional_change(story1), interaction_type
             )
             shift2 = story2.update_perspective(
-                story1, theme_analysis["theme_impact"], resonance, self._calculate_emotional_change(story2)
+                story2, theme_analysis["theme_impact"], resonance, 
+                self._calculate_emotional_change(story2), interaction_type
             )
 
             self.logger.info(
-                f"\nPerspective Updates:\n"
+                f"\nInteraction Type: {interaction_type}\n"
+                f"Perspective Updates:\n"
                 f"{story1.id}: shift={shift1:.4f}, total={story1.total_perspective_shift:.4f}\n"
                 f"{story2.id}: shift={shift2:.4f}, total={story2.total_perspective_shift:.4f}"
             )
 
-            # Update emotional states
-            emotional_change1 = story1.update_emotional_state(resonance, story2)
-            emotional_change2 = story2.update_emotional_state(resonance, story1)
+            # Update emotional states with interaction type influence
+            emotional_change1 = story1.update_emotional_state(resonance, story2, interaction_type)
+            emotional_change2 = story2.update_emotional_state(resonance, story1, interaction_type)
 
-            # Log emotional updates with a lower threshold
             if emotional_change1 > 0.001 or emotional_change2 > 0.001:
                 self.logger.info(
                     f"\nEmotional Updates:\n"
@@ -597,34 +625,11 @@ class StoryInteractionEngine:
                     f"{story2.id}: change={emotional_change2:.4f}"
                 )
 
-            # Create memories with emotional impact
-            memory1 = {
-                "time": self.field.time,
-                "interacted_with": story2.id,
-                "resonance": resonance,
-                "themes": list(story2.themes),
-                "shared_themes": list(theme_analysis["direct_shared"]),
-                "theme_impact": theme_analysis["theme_impact"],
-                "perspective_shift": shift1,
-                "total_shift": story1.total_perspective_shift,
-                "interaction_id": self.interaction_count,
-                "emotional_impact": emotional_change1,
-                "emotional_state_change": self._calculate_emotional_change(story1),
-            }
-
-            memory2 = {
-                "time": self.field.time,
-                "interacted_with": story1.id,
-                "resonance": resonance,
-                "themes": list(story1.themes),
-                "shared_themes": list(theme_analysis["direct_shared"]),
-                "theme_impact": theme_analysis["theme_impact"],
-                "perspective_shift": shift2,
-                "total_shift": story2.total_perspective_shift,
-                "interaction_id": self.interaction_count,
-                "emotional_impact": emotional_change2,
-                "emotional_state_change": self._calculate_emotional_change(story2),
-            }
+            # Create memories with emotional impact and interaction type
+            memory1 = self._create_memory(story1, story2, resonance, theme_analysis, 
+                                          shift1, emotional_change1, interaction_type)
+            memory2 = self._create_memory(story2, story1, resonance, theme_analysis, 
+                                          shift2, emotional_change2, interaction_type)
 
             # Update memory layers
             story1.memory_layer.append(memory1)
@@ -634,6 +639,7 @@ class StoryInteractionEngine:
             self.logger.info(
                 f"\nRich Interaction #{self.interaction_count}:\n"
                 f"  Stories: {story1.id} <-> {story2.id}\n"
+                f"  Interaction Type: {interaction_type}\n"
                 f"  Direct Shared Themes: {list(theme_analysis['direct_shared'])}\n"
                 f"  Theme Relationships Found: {theme_analysis['related_themes']}\n"
                 f"  Theme Impact: {theme_analysis['theme_impact']:.2f}\n"
@@ -641,6 +647,39 @@ class StoryInteractionEngine:
             )
 
             self.interaction_count += 1
+
+    def _determine_interaction_type(self, story1: Story, story2: Story) -> str:
+        """Determine the type of interaction based on story properties"""
+        shared_themes = set(story1.themes) & set(story2.themes)
+        emotional_similarity = self.field._calculate_emotional_similarity(story1, story2)
+        
+        if len(shared_themes) > 2 and emotional_similarity > 0.7:
+            return "collaboration"
+        elif len(shared_themes) < 1 and emotional_similarity < 0.3:
+            return "conflict"
+        elif story1.total_perspective_shift > story2.total_perspective_shift * 1.5:
+            return "inspiration"
+        else:
+            return "reflection"
+
+    def _create_memory(self, story: Story, other: Story, resonance: float, 
+                       theme_analysis: dict, shift: float, emotional_change: float, 
+                       interaction_type: str) -> dict:
+        """Create a detailed memory of the interaction"""
+        return {
+            "time": self.field.time,
+            "interacted_with": other.id,
+            "resonance": resonance,
+            "themes": list(other.themes),
+            "shared_themes": list(theme_analysis["direct_shared"]),
+            "theme_impact": theme_analysis["theme_impact"],
+            "perspective_shift": shift,
+            "total_shift": story.total_perspective_shift,
+            "interaction_id": self.interaction_count,
+            "emotional_impact": emotional_change,
+            "emotional_state_change": self._calculate_emotional_change(story),
+            "interaction_type": interaction_type
+        }
 
     def _calculate_emotional_change(self, story: Story) -> Dict[str, float]:
         return {
@@ -650,37 +689,6 @@ class StoryInteractionEngine:
             "hope_change": story.emotional_state.hope - story.previous_emotional_state.hope,
             "curiosity_change": story.emotional_state.curiosity - story.previous_emotional_state.curiosity,
         }
-
-    def _update_perspective_filter(
-        self,
-        story1: Story,
-        story2: Story,
-        shared_themes: set,
-        indirect_resonance: float,
-    ):
-        """Update perspective with theme relationships"""
-        base_decay = 0.9
-        direct_influence = len(shared_themes) * 0.15
-        indirect_influence = indirect_resonance * 0.1
-
-        # Combined theme influence
-        decay = base_decay - (direct_influence + indirect_influence)
-
-        # Update perspective
-        new_perspective = (
-            decay * story1.perspective_filter + (1 - decay) * story2.perspective_filter
-        )
-
-        # Record the shift
-        shift_magnitude = np.sum(np.abs(new_perspective - story1.perspective_filter))
-        story1.perspective_filter = new_perspective
-
-        self.logger.info(
-            f"Perspective Shift - {story1.id}:\n"
-            f"  Magnitude: {shift_magnitude:.4f}\n"
-            f"  Direct Theme Influence: {direct_influence:.2f}\n"
-            f"  Indirect Theme Influence: {indirect_influence:.2f}"
-        )
 
 
 class StoryPhysics:
@@ -1209,6 +1217,9 @@ async def simulate_field():
 
 if __name__ == "__main__":
     asyncio.run(simulate_field())
+
+
+
 
 
 
