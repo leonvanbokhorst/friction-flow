@@ -26,19 +26,168 @@ class StoryState:
         self.interaction_count += 1
 
 
-@dataclass
-class Story:
-    """Represents a single story in the narrative field"""
+class ThemeRelationshipMap:
+    """Manages theme relationships and their evolution"""
 
-    id: str
-    content: str
-    embedding: np.ndarray  # Core semantic embedding
-    memory_layer: List[Dict]  # Past interactions and experiences
-    perspective_filter: np.ndarray  # What this story is attuned to notice
-    position: np.ndarray  # Current position in field space
-    velocity: np.ndarray  # Current movement vector
-    themes: List[str]
-    resonance_history: List[Dict]
+    def __init__(self):
+        # Primary theme relationships with resonance values
+        self.primary_relationships = {
+            ("hope", "journey"): 0.7,
+            ("loneliness", "discovery"): 0.6,
+            ("guidance", "nature"): 0.5,
+            ("duty", "freedom"): 0.4,
+            ("imagination", "guidance"): 0.6,
+            ("subconscious", "discovery"): 0.5,
+            # Add more primary relationships
+            ("hope", "freedom"): 0.6,
+            ("loneliness", "nature"): 0.5,
+            ("imagination", "discovery"): 0.8,
+            ("journey", "nature"): 0.7,
+        }
+
+        # Secondary theme groups
+        self.theme_groups = {
+            "exploration": {"journey", "discovery", "nature"},
+            "inner_world": {"imagination", "subconscious", "freedom"},
+            "guidance": {"duty", "guidance", "hope"},
+            "solitude": {"loneliness", "nature", "subconscious"},
+        }
+
+    def get_theme_resonance(self, theme1: str, theme2: str) -> float:
+        """Get resonance between two themes"""
+        # Check direct relationship
+        if (theme1, theme2) in self.primary_relationships:
+            return self.primary_relationships[(theme1, theme2)]
+        if (theme2, theme1) in self.primary_relationships:
+            return self.primary_relationships[(theme2, theme1)]
+
+        # Check theme groups
+        shared_groups = 0
+        for group in self.theme_groups.values():
+            if theme1 in group and theme2 in group:
+                shared_groups += 1
+
+        return 0.3 * shared_groups if shared_groups > 0 else 0.1
+
+
+class StoryPerspective:
+    """Manages a story's evolving perspective"""
+
+    def __init__(self, initial_filter: np.ndarray):
+        self.filter = initial_filter.copy()
+        self.shift_history = []
+        self.theme_influences = {}
+        self.total_shift = 0.0
+
+    def update(
+        self,
+        other_filter: np.ndarray,
+        shared_themes: set,
+        indirect_resonance: float,
+        theme_relationships: List[tuple],
+    ):
+        """Update perspective with detailed tracking"""
+        # Calculate influence factors
+        direct_influence = len(shared_themes) * 0.15
+        indirect_influence = indirect_resonance * 0.1
+        relationship_influence = len(theme_relationships) * 0.05
+
+        total_influence = direct_influence + indirect_influence + relationship_influence
+        decay = max(0.5, 0.9 - total_influence)  # Prevent complete override
+
+        # Calculate new filter
+        old_filter = self.filter.copy()
+        self.filter = decay * self.filter + (1 - decay) * other_filter
+
+        # Calculate shift magnitude
+        shift = np.sum(np.abs(self.filter - old_filter))
+        self.total_shift += shift
+
+        # Record shift details
+        self.shift_history.append(
+            {
+                "magnitude": shift,
+                "direct_influence": direct_influence,
+                "indirect_influence": indirect_influence,
+                "relationship_influence": relationship_influence,
+                "shared_themes": list(shared_themes),
+                "theme_relationships": theme_relationships,
+            }
+        )
+
+        # Update theme influences
+        for theme in shared_themes:
+            self.theme_influences[theme] = (
+                self.theme_influences.get(theme, 0) + direct_influence
+            )
+        for t1, t2 in theme_relationships:
+            self.theme_influences[t1] = (
+                self.theme_influences.get(t1, 0) + relationship_influence
+            )
+            self.theme_influences[t2] = (
+                self.theme_influences.get(t2, 0) + relationship_influence
+            )
+
+        return shift
+
+
+class Story:
+    def __init__(
+        self,
+        id: str,
+        content: str,
+        embedding: np.ndarray,
+        perspective_filter: np.ndarray,
+        themes: List[str],
+        position: np.ndarray = None,
+        velocity: np.ndarray = None,
+        **kwargs,
+    ):
+        self.id = id
+        self.content = content
+        self.embedding = embedding
+        self.initial_perspective = perspective_filter.copy()
+        self.perspective_filter = perspective_filter.copy()  # Change this line
+        self.themes = themes
+        self.memory_layer = []
+        self.resonance_history = []
+        self.total_perspective_shift = 0.0
+        self.perspective_shifts = []
+        
+        # Initialize position and velocity
+        self.position = position if position is not None else np.random.randn(3)
+        self.velocity = velocity if velocity is not None else np.zeros(3)
+
+    def update_perspective(self, other: "Story", theme_impact: float, resonance: float):
+        """Update perspective with accumulation"""
+        # Calculate influence factors
+        theme_weight = theme_impact * 0.2
+        resonance_weight = resonance * 0.3
+        total_weight = min(0.5, theme_weight + resonance_weight)  # Cap maximum shift
+
+        # Calculate new perspective
+        new_perspective = (
+            1 - total_weight
+        ) * self.perspective_filter + total_weight * other.perspective_filter
+
+        # Calculate shift magnitude
+        shift = float(np.sum(np.abs(new_perspective - self.perspective_filter)))
+
+        # Update accumulators
+        self.total_perspective_shift += shift
+        self.perspective_shifts.append(
+            {
+                "interaction_with": other.id,
+                "magnitude": shift,
+                "theme_impact": theme_impact,
+                "resonance": resonance,
+            }
+        )
+
+        # Store new perspective
+        self.perspective_filter = new_perspective
+
+        return shift
 
 
 class NarrativeFieldViz:
@@ -90,59 +239,6 @@ class NarrativeField:
         self.logger = logging.getLogger(__name__)
 
     def detect_resonance(self, story1: Story, story2: Story) -> float:
-        """Calculate resonance with improved theme handling"""
-        # Get base embedding similarity
-        embedding_similarity = float(
-            F.cosine_similarity(
-                torch.tensor(story1.embedding), torch.tensor(story2.embedding), dim=0
-            )
-        )
-
-        # Enhanced theme handling
-        shared_themes = set(story1.themes) & set(story2.themes)
-        theme_overlap = len(shared_themes) / max(
-            len(set(story1.themes) | set(story2.themes)), 1
-        )
-
-        # Weight shared themes more heavily
-        theme_bonus = 0.2 if shared_themes else 0.0
-
-        # Consider perspective filter alignment
-        filter_alignment = float(
-            F.cosine_similarity(
-                torch.tensor(story1.perspective_filter),
-                torch.tensor(story2.perspective_filter),
-                dim=0,
-            )
-        )
-
-        # Scale by distance more gradually
-        distance = np.linalg.norm(story1.position - story2.position)
-        distance_factor = 1.0 / (1.0 + distance / self.interaction_range)
-
-        # Combine factors with theme bonus
-        return (
-            0.4 * embedding_similarity
-            + 0.3 * (theme_overlap + theme_bonus)
-            + 0.3 * filter_alignment
-        ) * distance_factor
-
-    def add_story(self, story: Story):
-        """Add a new story to the field"""
-        self.stories.append(story)
-        self._update_field_potential()
-        self.logger.info(f"Added new story: {story.id}")
-
-    def _update_field_potential(self):
-        """Update the field's potential energy based on story positions"""
-        self.field_potential = np.zeros(self.dimension)
-        for story in self.stories:
-            # Each story contributes to the field potential
-            self.field_potential += story.embedding * np.exp(
-                -np.linalg.norm(story.position) / 10.0
-            )
-
-    def detect_resonance(self, story1: Story, story2: Story) -> float:
         """Calculate resonance between two stories"""
         # Base resonance on embedding similarity
         embedding_similarity = F.cosine_similarity(
@@ -158,7 +254,7 @@ class NarrativeField:
         filter_alignment = F.cosine_similarity(
             torch.tensor(story1.perspective_filter),
             torch.tensor(story2.perspective_filter),
-            dim=0,
+            dim=0
         )
 
         # Scale resonance by distance
@@ -169,6 +265,21 @@ class NarrativeField:
             (0.4 * embedding_similarity + 0.3 * theme_overlap + 0.3 * filter_alignment)
             * distance_factor
         )
+
+    def add_story(self, story: Story):
+        """Add a new story to the field"""
+        self.stories.append(story)
+        self._update_field_potential()
+        self.logger.info(f"Added new story: {story.id}")
+
+    def _update_field_potential(self):
+        """Update the field's potential energy based on story positions"""
+        self.field_potential = np.zeros(self.dimension)
+        for story in self.stories:
+            # Each story contributes to the field potential
+            self.field_potential += story.embedding * np.exp(
+                -np.linalg.norm(story.position) / 10.0
+            )
 
 
 class StoryPhysics:
@@ -356,30 +467,39 @@ class StoryInteractionEngine:
         self.theme_engine = ThemeEvolutionEngine()
 
     def process_interaction(self, story1: Story, story2: Story):
-        """Process interaction with theme evolution"""
         resonance = self.field.detect_resonance(story1, story2)
-        
-        # Process theme relationships
         theme_analysis = self.theme_engine.process_interaction(
             story1, story2, resonance
         )
-        
+
         if resonance > self.memory_threshold:
-            self.interaction_count += 1
-            
-            # Enhanced memory formation
+            # Update perspectives
+            shift1 = story1.update_perspective(
+                story2, theme_analysis["theme_impact"], resonance
+            )
+            shift2 = story2.update_perspective(
+                story1, theme_analysis["theme_impact"], resonance
+            )
+
+            self.logger.info(
+                f"\nPerspective Updates:\n"
+                f"{story1.id}: shift={shift1:.4f}, total={story1.total_perspective_shift:.4f}\n"
+                f"{story2.id}: shift={shift2:.4f}, total={story2.total_perspective_shift:.4f}"
+            )
+
+            # Create memories with perspective shift information
             memory1 = {
                 "time": self.field.time,
                 "interacted_with": story2.id,
                 "resonance": resonance,
                 "themes": list(story2.themes),
-                "shared_themes": list(theme_analysis['direct_shared']),
-                "related_themes": theme_analysis['related_themes'],
-                "interaction_id": self.interaction_count,
-                "emotional_impact": resonance * (
-                    len(theme_analysis['direct_shared']) + 
-                    theme_analysis['indirect_resonance']
-                )
+                "shared_themes": list(theme_analysis["direct_shared"]),
+                "theme_impact": theme_analysis["theme_impact"],
+                "perspective_shift": shift1,
+                "total_shift": story1.total_perspective_shift,
+                "interaction_id": self.interaction_count,  # TODO LBO?
+                "emotional_impact": resonance
+                * len(theme_analysis["direct_shared"]),  # TODO LBO?
             }
 
             memory2 = {
@@ -387,9 +507,12 @@ class StoryInteractionEngine:
                 "interacted_with": story1.id,
                 "resonance": resonance,
                 "themes": list(story1.themes),
-                "shared_themes": list(theme_analysis['direct_shared']),
+                "shared_themes": list(theme_analysis["direct_shared"]),
+                "theme_impact": theme_analysis["theme_impact"],
+                "perspective_shift": shift2,
+                "total_shift": story2.total_perspective_shift,
                 "interaction_id": self.interaction_count,
-                "emotional_impact": resonance * len(theme_analysis['direct_shared']),
+                "emotional_impact": resonance * len(theme_analysis["direct_shared"]),
             }
 
             # Update memory layers
@@ -405,36 +528,39 @@ class StoryInteractionEngine:
                 f"  Theme Impact: {theme_analysis['theme_impact']:.2f}\n"
                 f"  Emotional Impact: {memory1['emotional_impact']:.2f}"
             )
-            
+
             # Update perspectives with theme relationships
             self._update_perspective_filter(
-                story1, story2, 
-                theme_analysis['direct_shared'],
-                theme_analysis['indirect_resonance']
+                story1,
+                story2,
+                theme_analysis["direct_shared"],
+                theme_analysis["indirect_resonance"],
             )
 
     def _update_perspective_filter(
-        self, story1: Story, story2: Story, 
-        shared_themes: set, indirect_resonance: float
+        self,
+        story1: Story,
+        story2: Story,
+        shared_themes: set,
+        indirect_resonance: float,
     ):
         """Update perspective with theme relationships"""
         base_decay = 0.9
         direct_influence = len(shared_themes) * 0.15
         indirect_influence = indirect_resonance * 0.1
-        
+
         # Combined theme influence
         decay = base_decay - (direct_influence + indirect_influence)
-        
+
         # Update perspective
         new_perspective = (
-            decay * story1.perspective_filter +
-            (1 - decay) * story2.perspective_filter
+            decay * story1.perspective_filter + (1 - decay) * story2.perspective_filter
         )
-        
+
         # Record the shift
         shift_magnitude = np.sum(np.abs(new_perspective - story1.perspective_filter))
         story1.perspective_filter = new_perspective
-        
+
         self.logger.info(
             f"Perspective Shift - {story1.id}:\n"
             f"  Magnitude: {shift_magnitude:.4f}\n"
@@ -583,7 +709,7 @@ class StoryPhysics:
                 story.velocity = self._limit_velocity(story.velocity)
 
 
-async def create_lighthouse_story(llm: LanguageModel) -> Story:
+async def create_lighthouse_story(llm: LanguageModel, position: np.ndarray) -> Story:
     """Create the lighthouse story with its properties"""
     content = """
     The Lighthouse on the Cliff
@@ -599,14 +725,14 @@ async def create_lighthouse_story(llm: LanguageModel) -> Story:
         embedding=np.array(embedding),
         memory_layer=[],
         perspective_filter=np.ones(len(embedding)),
-        position=np.random.randn(3) * 2.0,  # Scaled initial positions
+        position=position,
         velocity=np.zeros(3),
         themes=["loneliness", "duty", "hope", "guidance"],
         resonance_history=[],
     )
 
 
-async def create_path_story(llm: LanguageModel) -> Story:
+async def create_path_story(llm: LanguageModel, position: np.ndarray) -> Story:
     content = """
     The Path Through the Forest
     This story is about a traveler lost in a forest, searching for a way home. 
@@ -620,14 +746,14 @@ async def create_path_story(llm: LanguageModel) -> Story:
         embedding=np.array(embedding),
         memory_layer=[],
         perspective_filter=np.ones(len(embedding)),
-        position=np.random.randn(3) * 2.0,  # Scaled initial positions
+        position=position,
         velocity=np.zeros(3),
         themes=["journey", "discovery", "nature"],
         resonance_history=[],
     )
 
 
-async def create_dream_story(llm: LanguageModel) -> Story:
+async def create_dream_story(llm: LanguageModel, position: np.ndarray) -> Story:
     content = """
     The Child's Dream of Flight
     This story follows a child who dreams each night of flying, soaring above 
@@ -641,7 +767,7 @@ async def create_dream_story(llm: LanguageModel) -> Story:
         embedding=np.array(embedding),
         memory_layer=[],
         perspective_filter=np.ones(len(embedding)),
-        position=np.random.randn(3) * 2.0,  # Scaled initial positions
+        position=position,
         velocity=np.zeros(3),
         themes=["imagination", "freedom", "subconscious"],
         resonance_history=[],
@@ -738,7 +864,7 @@ class StoryJourneyLogger:
         self.journey_log[story.id].append(state)
 
     def summarize_journey(self, story: Story):
-        """Provide comprehensive journey summary"""
+        """Enhanced journey summary with accumulated perspective shifts"""
         journey = self.journey_log.get(story.id, [])
         if not journey:
             return
@@ -746,23 +872,23 @@ class StoryJourneyLogger:
         start_state = journey[0]
         end_state = journey[-1]
 
-        # Calculate journey metrics
+        # Calculate metrics
         total_distance = self.total_distances[story.id]
         direct_distance = np.linalg.norm(
             end_state["position"] - start_state["position"]
         )
         wandering_ratio = total_distance / (direct_distance + 1e-6)
 
-        # Memory and interaction analysis
-        memories_formed = end_state["memory_count"]
-        unique_interactions = len(set(m["interacted_with"] for m in story.memory_layer))
-
-        # Perspective evolution
-        perspective_change = (
-            end_state["perspective_sum"] - start_state["perspective_sum"]
+        # Perspective analysis
+        significant_shifts = [
+            s for s in story.perspective_shifts if s["magnitude"] > 0.01
+        ]
+        avg_shift = (
+            np.mean([s["magnitude"] for s in significant_shifts])
+            if significant_shifts
+            else 0
         )
 
-        # Log comprehensive summary
         self.logger.info(
             f"\n=== Journey Summary for {story.id} ===\n"
             f"Movement Metrics:\n"
@@ -770,13 +896,15 @@ class StoryJourneyLogger:
             f"  Direct Distance (start to end): {direct_distance:.2f}\n"
             f"  Wandering Ratio: {wandering_ratio:.2f}\n"
             f"\nInteraction Metrics:\n"
-            f"  Memories Formed: {memories_formed}\n"
-            f"  Unique Interactions: {unique_interactions}\n"
-            f"  Perspective Shift: {perspective_change:.2f}\n"
+            f"  Memories Formed: {len(story.memory_layer)}\n"
+            f"  Unique Interactions: {len(set(m['interacted_with'] for m in story.memory_layer))}\n"
+            f"  Total Perspective Shift: {story.total_perspective_shift:.4f}\n"
+            f"  Average Shift Magnitude: {avg_shift:.4f}\n"
+            f"  Significant Perspective Changes: {len(significant_shifts)}\n"
             f"\nFinal State:\n"
             f"  Position: {end_state['position']}\n"
             f"  Velocity: {end_state['velocity']}\n"
-            f"\nSignificant Events: {len([e for e in self.significant_events if e['type'] == 'interaction' and story.id in e['stories']])}\n"
+            f"\nSignificant Events: {len(story.memory_layer)}"
         )
 
 
@@ -789,6 +917,33 @@ async def create_story_cluster():
 
     # Add random offset to make it interesting
     return base_positions + np.random.randn(3, 3) * 0.2
+
+
+def summarize_story_journey(story: Story):
+    """Enhanced journey summary with perspective analysis"""
+    theme_counts = {}
+    for memory in story.memory_layer:
+        for theme in memory["themes"]:
+            theme_counts[theme] = theme_counts.get(theme, 0) + 1
+
+    most_influential_themes = sorted(
+        story.perspective.theme_influences.items(), key=lambda x: x[1], reverse=True
+    )[:3]
+
+    total_perspective_shift = story.perspective.total_shift
+
+    return {
+        "total_memories": len(story.memory_layer),
+        "unique_interactions": len(
+            set(m["interacted_with"] for m in story.memory_layer)
+        ),
+        "theme_exposure": theme_counts,
+        "total_perspective_shift": total_perspective_shift,
+        "most_influential_themes": most_influential_themes,
+        "perspective_shifts": len(
+            [s for s in story.perspective.shift_history if s["magnitude"] > 0.01]
+        ),
+    }
 
 
 async def simulate_field():
@@ -812,12 +967,13 @@ async def simulate_field():
     interaction_engine = StoryInteractionEngine(field)
     collective_engine = EnhancedCollectiveStoryEngine(field)
 
-    # Create stories
-    lighthouse = await create_lighthouse_story(llm)
+    # Create stories with initial positions
+    initial_positions = await create_story_cluster()
+    lighthouse = await create_lighthouse_story(llm, position=initial_positions[0])
     logger.info(f"Created lighthouse story: {lighthouse.id}")
-    path = await create_path_story(llm)
+    path = await create_path_story(llm, position=initial_positions[1])
     logger.info(f"Created path story: {path.id}")
-    dream = await create_dream_story(llm)
+    dream = await create_dream_story(llm, position=initial_positions[2])
     logger.info(f"Created dream story: {dream.id}")
 
     # Add stories to field
@@ -829,7 +985,7 @@ async def simulate_field():
     journey_logger = StoryJourneyLogger()
 
     # Simulation loop
-    for t in range(1000):
+    for t in range(10000):
         field.time = t
 
         # Update physics
@@ -885,3 +1041,4 @@ async def simulate_field():
 
 if __name__ == "__main__":
     asyncio.run(simulate_field())
+
