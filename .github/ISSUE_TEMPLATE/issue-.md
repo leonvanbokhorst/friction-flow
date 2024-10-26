@@ -4,6 +4,7 @@ about: Describe an issue to help us tackle them
 title: ''
 labels: ''
 assignees: ''
+project: 'friction-flow'
 
 ---
 

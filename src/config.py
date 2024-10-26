@@ -34,14 +34,15 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "optimal_config": {
             "n_gpu_layers": -1,
             "n_batch": 512,
-            "n_ctx": 4096,
+            "n_ctx": 16384,
             "metal_device": "mps",
             "main_gpu": 0,
             "use_metal": True,
-            "n_threads": 4,
+            "n_threads": 8,
         },
     },
 }
+
 
 def get_model_config(config_name: str = "balanced") -> Dict[str, Any]:
     """
