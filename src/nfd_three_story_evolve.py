@@ -675,7 +675,7 @@ class EnhancedInteractionEngine(BaseClass):
                 "partner_id": story2.id,
                 "resonance": resonance,
                 "interaction_type": interaction_type,
-                "perspective_shift": perspective_shift,
+                "perspective_shift": perspective_shift,  # This is now awaited
                 "timestamp": self.field.time,
             }
             story1.memory_layer.append(memory)
@@ -763,26 +763,23 @@ class EnhancedInteractionEngine(StoryInteractionEngine):
         return 0.5  # Return a value between 0 and 1
 
 
-class StoryJourneyLogger(BaseClass):
-    """Tracks and logs the journey of stories through the narrative field"""
+class EnhancedJourneyLogger(BaseClass):
+    """Enhanced logger to track and analyze story journeys through the narrative field"""
 
     def __init__(self):
         super().__init__()
         self.journey_log = {}
-        self.total_distances = {}  # Track cumulative distance for each story
-        self.significant_events = []  # Track important moments
+        self.total_distances = {}
+        self.significant_events = []
+        self.emotional_history = {}
 
-    def log_interaction(
-        self, story1: Story, story2: Story, resonance: float, interaction_type: str
-    ):
+    def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
         latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
         perspective_shift = latest_memory.get("perspective_shift", 0)
 
-        # If perspective_shift is a coroutine, we need to run it in an event loop
+        # Handle coroutine perspective_shift if necessary
         if asyncio.iscoroutine(perspective_shift):
-            perspective_shift = asyncio.get_event_loop().run_until_complete(
-                perspective_shift
-            )
+            perspective_shift = asyncio.get_event_loop().run_until_complete(perspective_shift)
 
         log_entry = (
             f"Interaction between {story1.id} and {story2.id}:\n"
@@ -797,8 +794,11 @@ class StoryJourneyLogger(BaseClass):
         )
         self.logger.info(log_entry)
 
+        # Log emotional states
+        self.log_emotional_state(story1)
+        self.log_emotional_state(story2)
+
     def log_story_state(self, story: Story, timestep: float):
-        """Log detailed story state and track journey metrics"""
         if story.id not in self.journey_log:
             self.journey_log[story.id] = []
             self.total_distances[story.id] = 0.0
@@ -811,16 +811,13 @@ class StoryJourneyLogger(BaseClass):
 
             # Log significant movements
             if movement > 0.5:  # Threshold for significant movement
-                self.significant_events.append(
-                    {
-                        "type": "movement",
-                        "time": timestep,
-                        "story_id": story.id,
-                        "distance": movement,
-                        "direction": story.velocity
-                        / (np.linalg.norm(story.velocity) + 1e-6),
-                    }
-                )
+                self.significant_events.append({
+                    "type": "movement",
+                    "time": timestep,
+                    "story_id": story.id,
+                    "distance": movement,
+                    "direction": story.velocity / (np.linalg.norm(story.velocity) + 1e-6),
+                })
 
         # Store current state
         state = {
@@ -833,8 +830,17 @@ class StoryJourneyLogger(BaseClass):
         }
         self.journey_log[story.id].append(state)
 
+    def log_emotional_state(self, story: Story):
+        if story.id not in self.emotional_history:
+            self.emotional_history[story.id] = []
+        
+        self.emotional_history[story.id].append({
+            "timestep": story.field.time,
+            "emotional_state": story.emotional_state.description,
+            "embedding": story.emotional_state.embedding.tolist()
+        })
+
     def summarize_journey(self, story: Story):
-        """Enhanced journey summary with accumulated perspective shifts"""
         journey = self.journey_log.get(story.id, [])
         if not journey:
             return
@@ -844,28 +850,20 @@ class StoryJourneyLogger(BaseClass):
 
         # Calculate metrics
         total_distance = self.total_distances[story.id]
-        direct_distance = np.linalg.norm(
-            end_state["position"] - start_state["position"]
-        )
+        direct_distance = np.linalg.norm(end_state["position"] - start_state["position"])
         wandering_ratio = total_distance / (direct_distance + 1e-6)
 
         # Perspective analysis
-        significant_shifts = [
-            s for s in story.perspective_shifts if s["magnitude"] > 0.01
-        ]
-        avg_shift = (
-            np.mean([s["magnitude"] for s in significant_shifts])
-            if significant_shifts
-            else 0
-        )
+        significant_shifts = [s for s in story.perspective_shifts if s["magnitude"] > 0.01]
+        avg_shift = np.mean([s["magnitude"] for s in significant_shifts]) if significant_shifts else 0
 
         # Safely get unique interactions
-        unique_interactions = {
-            m["interacted_with"]
-            for m in story.memory_layer
-            if "interacted_with" in m
-        }
+        unique_interactions = {m["partner_id"] for m in story.memory_layer if "partner_id" in m}
         num_unique_interactions = len(unique_interactions)
+
+        # Emotional journey analysis
+        emotional_states = self.emotional_history.get(story.id, [])
+        emotional_changes = len(emotional_states) - 1 if len(emotional_states) > 1 else 0
 
         self.logger.info(
             f"\n=== Journey Summary for {story.id} ===\n"
@@ -879,11 +877,39 @@ class StoryJourneyLogger(BaseClass):
             f"  Total Perspective Shift: {story.total_perspective_shift:.4f}\n"
             f"  Average Shift Magnitude: {avg_shift:.4f}\n"
             f"  Significant Perspective Changes: {len(significant_shifts)}\n"
+            f"\nEmotional Journey:\n"
+            f"  Emotional State Changes: {emotional_changes}\n"
+            f"  Initial Emotional State: {emotional_states[0]['emotional_state'] if emotional_states else 'N/A'}\n"
+            f"  Final Emotional State: {emotional_states[-1]['emotional_state'] if emotional_states else 'N/A'}\n"
             f"\nFinal State:\n"
             f"  Position: {end_state['position']}\n"
             f"  Velocity: {end_state['velocity']}\n"
             f"\nSignificant Events: {len(story.memory_layer)}"
         )
+
+    def get_journey_analytics(self, story: Story):
+        journey = self.journey_log.get(story.id, [])
+        if not journey:
+            return {}
+
+        theme_counts = {}
+        for memory in story.memory_layer:
+            for theme in memory.get("themes", []):
+                theme_counts[theme] = theme_counts.get(theme, 0) + 1
+
+        most_influential_themes = sorted(
+            story.perspective.theme_influences.items(), key=lambda x: x[1], reverse=True
+        )[:3]
+
+        return {
+            "total_memories": len(story.memory_layer),
+            "unique_interactions": len(set(m.get("partner_id") for m in story.memory_layer if "partner_id" in m)),
+            "theme_exposure": theme_counts,
+            "total_perspective_shift": story.total_perspective_shift,
+            "most_influential_themes": most_influential_themes,
+            "perspective_shifts": len([s for s in story.perspective_shifts if s["magnitude"] > 0.01]),
+            "emotional_changes": len(self.emotional_history.get(story.id, [])) - 1
+        }
 
 
 async def create_story_cluster():
@@ -895,33 +921,6 @@ async def create_story_cluster():
 
     # Add random offset to make it interesting
     return base_positions + np.random.randn(3, 3) * 0.2
-
-
-def summarize_story_journey(story: Story):
-    """Enhanced journey summary with perspective analysis"""
-    theme_counts = {}
-    for memory in story.memory_layer:
-        for theme in memory["themes"]:
-            theme_counts[theme] = theme_counts.get(theme, 0) + 1
-
-    most_influential_themes = sorted(
-        story.perspective.theme_influences.items(), key=lambda x: x[1], reverse=True
-    )[:3]
-
-    total_perspective_shift = story.perspective.total_shift
-
-    return {
-        "total_memories": len(story.memory_layer),
-        "unique_interactions": len(
-            set(m["interacted_with"] for m in story.memory_layer)
-        ),
-        "theme_exposure": theme_counts,
-        "total_perspective_shift": total_perspective_shift,
-        "most_influential_themes": most_influential_themes,
-        "perspective_shifts": len(
-            [s for s in story.perspective.shift_history if s["magnitude"] > 0.01]
-        ),
-    }
 
 
 class DynamicThemeGenerator(BaseClass):
@@ -1078,7 +1077,7 @@ async def simulate_field():
         field.add_story(story)
 
     # Add journey logger
-    journey_logger = StoryJourneyLogger()
+    journey_logger = EnhancedJourneyLogger()
 
     # Simulation loop
     for t in range(100):
@@ -1183,6 +1182,8 @@ async def simulate_field():
     logger.info("\n=== Final Journey Summaries ===")
     for story in field.stories:
         journey_logger.summarize_journey(story)
+        analytics = journey_logger.get_journey_analytics(story)
+        # Use analytics as needed
 
     logger.info("Narrative field simulation completed")
 
