@@ -210,13 +210,57 @@ class Story:
         intensity = np.mean([getattr(self.emotional_state, e) for e in vars(self.emotional_state)])
         return similarity * intensity * 0.1
 
-    def update_emotional_state(self, interaction_impact: float, themes: List[str]):
+    def update_emotional_state(self, interaction_impact: float, other_story: 'Story'):
+        """Update emotional state based on interaction impact and themes"""
         self.previous_emotional_state = EmotionalState(**vars(self.emotional_state))
-        if "hope" in themes:
-            self.emotional_state.hope += interaction_impact * 0.2
-        if "journey" in themes:
-            self.emotional_state.curiosity += interaction_impact * 0.15
-        # ... other emotion updates based on themes
+        
+        # Calculate theme-based emotional changes
+        joy_change = 0.0
+        sadness_change = 0.0
+        fear_change = 0.0
+        hope_change = 0.0
+        curiosity_change = 0.0
+
+        shared_themes = set(self.themes) & set(other_story.themes)
+        all_themes = set(self.themes) | set(other_story.themes)
+        
+        for theme in all_themes:
+            if theme in ["hope", "freedom", "imagination"]:
+                joy_change += 0.05
+                hope_change += 0.1
+            elif theme in ["loneliness", "duty"]:
+                sadness_change += 0.05
+            elif theme in ["journey", "discovery"]:
+                curiosity_change += 0.1
+                fear_change += 0.02  # A little fear in the unknown
+            elif theme in ["nature", "guidance"]:
+                hope_change += 0.05
+                fear_change -= 0.02  # Nature and guidance reduce fear slightly
+
+        # Apply resonance-based amplification
+        resonance = self.field.detect_resonance(self, other_story)
+        amplification = 1 + resonance
+
+        # Introduce a small random factor for variability
+        random_factor = 0.01 * (2 * np.random.random() - 1)
+
+        # Update emotional state with amplified changes
+        self.emotional_state.joy = min(1.0, max(0.0, self.emotional_state.joy + (joy_change + random_factor) * amplification))
+        self.emotional_state.sadness = min(1.0, max(0.0, self.emotional_state.sadness + (sadness_change + random_factor) * amplification))
+        self.emotional_state.fear = min(1.0, max(0.0, self.emotional_state.fear + (fear_change + random_factor) * amplification))
+        self.emotional_state.hope = min(1.0, max(0.0, self.emotional_state.hope + (hope_change + random_factor) * amplification))
+        self.emotional_state.curiosity = min(1.0, max(0.0, self.emotional_state.curiosity + (curiosity_change + random_factor) * amplification))
+
+        # Calculate overall emotional change
+        total_change = (
+            abs(self.emotional_state.joy - self.previous_emotional_state.joy) +
+            abs(self.emotional_state.sadness - self.previous_emotional_state.sadness) +
+            abs(self.emotional_state.fear - self.previous_emotional_state.fear) +
+            abs(self.emotional_state.hope - self.previous_emotional_state.hope) +
+            abs(self.emotional_state.curiosity - self.previous_emotional_state.curiosity)
+        )
+        
+        return total_change
 
 
 class NarrativeFieldViz:
@@ -541,9 +585,16 @@ class StoryInteractionEngine:
             )
 
             # Update emotional states
-            emotional_impact = resonance * len(theme_analysis["direct_shared"]) * 0.1
-            story1.update_emotional_state(emotional_impact, story2.themes)
-            story2.update_emotional_state(emotional_impact, story1.themes)
+            emotional_change1 = story1.update_emotional_state(resonance, story2)
+            emotional_change2 = story2.update_emotional_state(resonance, story1)
+
+            # Log emotional updates with a lower threshold
+            if emotional_change1 > 0.001 or emotional_change2 > 0.001:
+                self.logger.info(
+                    f"\nEmotional Updates:\n"
+                    f"{story1.id}: change={emotional_change1:.4f}\n"
+                    f"{story2.id}: change={emotional_change2:.4f}"
+                )
 
             # Create memories with emotional impact
             memory1 = {
@@ -556,7 +607,7 @@ class StoryInteractionEngine:
                 "perspective_shift": shift1,
                 "total_shift": story1.total_perspective_shift,
                 "interaction_id": self.interaction_count,
-                "emotional_impact": emotional_impact,
+                "emotional_impact": emotional_change1,
                 "emotional_state_change": self._calculate_emotional_change(story1),
             }
 
@@ -570,7 +621,7 @@ class StoryInteractionEngine:
                 "perspective_shift": shift2,
                 "total_shift": story2.total_perspective_shift,
                 "interaction_id": self.interaction_count,
-                "emotional_impact": emotional_impact,
+                "emotional_impact": emotional_change2,
                 "emotional_state_change": self._calculate_emotional_change(story2),
             }
 
@@ -585,19 +636,12 @@ class StoryInteractionEngine:
                 f"  Direct Shared Themes: {list(theme_analysis['direct_shared'])}\n"
                 f"  Theme Relationships Found: {theme_analysis['related_themes']}\n"
                 f"  Theme Impact: {theme_analysis['theme_impact']:.2f}\n"
-                f"  Emotional Impact: {emotional_impact:.2f}"
+                f"  Emotional Impact: {emotional_change1:.2f}, {emotional_change2:.2f}"
             )
 
-            # Update perspectives with theme relationships
-            self._update_perspective_filter(
-                story1,
-                story2,
-                theme_analysis["direct_shared"],
-                theme_analysis["indirect_resonance"],
-            )
+            self.interaction_count += 1
 
     def _calculate_emotional_change(self, story: Story) -> Dict[str, float]:
-        # Calculate the change in emotional state
         return {
             "joy_change": story.emotional_state.joy - story.previous_emotional_state.joy,
             "sadness_change": story.emotional_state.sadness - story.previous_emotional_state.sadness,
