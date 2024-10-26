@@ -965,9 +965,11 @@ class EnhancedJourneyLogger(BaseClass):
         return {
             "total_memories": len(story.memory_layer),
             "unique_interactions": len(
-                set(
-                    m.partner_id for m in story.memory_layer if m.partner_id is not None
-                )
+                {
+                    m.partner_id
+                    for m in story.memory_layer
+                    if m.partner_id is not None
+                }
             ),
             "theme_exposure": theme_counts,
             "total_perspective_shift": story.total_perspective_shift,
