@@ -1068,9 +1068,11 @@ class JourneyLogger:
         )
 
         # Safely get unique interactions
-        unique_interactions = set(
-            m["interacted_with"] for m in story.memory_layer if "interacted_with" in m
-        )
+        unique_interactions = {
+            m["interacted_with"]
+            for m in story.memory_layer
+            if "interacted_with" in m
+        }
         num_unique_interactions = len(unique_interactions)
 
         self.logger.info(
