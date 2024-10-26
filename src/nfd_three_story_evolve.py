@@ -38,10 +38,16 @@ class StoryState:
         self.interaction_count += 1
 
 
-class ThemeRelationshipMap:
+class BaseClass:
+    def __init__(self):
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+
+
+class ThemeRelationshipMap(BaseClass):
     """Manages theme relationships and their evolution"""
 
     def __init__(self):
+        super().__init__()
         # Primary theme relationships with resonance values
         self.primary_relationships = {
             ("hope", "journey"): 0.7,
@@ -64,7 +70,6 @@ class ThemeRelationshipMap:
             "guidance": {"duty", "guidance", "hope"},
             "solitude": {"loneliness", "nature", "subconscious"},
         }
-        self.logger = logging.getLogger(__name__)
 
     def get_theme_resonance(self, theme1: str, theme2: str) -> float:
         """Get resonance between two themes"""
@@ -82,15 +87,15 @@ class ThemeRelationshipMap:
         return 0.3 * shared_groups if shared_groups > 0 else 0.1
 
 
-class StoryPerspective:
+class StoryPerspective(BaseClass):
     """Manages a story's evolving perspective"""
 
     def __init__(self, initial_filter: np.ndarray):
+        super().__init__()
         self.filter = initial_filter.copy()
         self.shift_history = []
         self.theme_influences = {}
         self.total_shift = 0.0
-        self.logger = logging.getLogger(__name__)
 
     def update(
         self,
@@ -144,8 +149,9 @@ class StoryPerspective:
         return shift
 
 
-class EmotionalState:
+class EmotionalState(BaseClass):
     def __init__(self, description: str, embedding: np.ndarray):
+        super().__init__()
         self.description = description
         self.embedding = embedding
 
@@ -186,7 +192,7 @@ class EmotionalState:
         return self.description
 
 
-class Story:
+class Story(BaseClass):
     def __init__(
         self,
         id: str,
@@ -201,6 +207,7 @@ class Story:
         protagonist_name: str = None,
         **kwargs,
     ):
+        super().__init__()
         self.id = id
         self.content = content
         self.embedding = embedding
@@ -216,8 +223,6 @@ class Story:
         self.total_perspective_shift = 0.0
         self.perspective_shifts = []
         self.protagonist_name = protagonist_name
-
-        self.logger = logging.getLogger(__name__)
 
     def __str__(self):
         return f"Story {self.id} ({self.protagonist_name}): {self.content[:50]}..."
@@ -316,13 +321,13 @@ class Story:
         return shift
 
 
-class NarrativeFieldViz:
+class NarrativeFieldViz(BaseClass):
     """Handles visualization of field state"""
 
     def __init__(self, field_size: int = 1024):
+        super().__init__()
         self.field_size = field_size
         self.history: List[Dict] = []
-        self.logger = logging.getLogger(__name__)
 
     async def capture_state(self, field, timestep: int):
         """Capture current field state for visualization"""
@@ -353,8 +358,9 @@ class NarrativeFieldViz:
         return resonance_map
 
 
-class NarrativeField:
+class NarrativeField(BaseClass):
     def __init__(self, dimension: int = 1024):
+        super().__init__()
         self.dimension = dimension
         self.stories: List[Story] = []
         self.field_memory = []
@@ -365,7 +371,6 @@ class NarrativeField:
         self.resonance_threshold = 0.2  # Lower threshold to allow more interactions
         self.interaction_range = 3.0  # Increased range
         self.field_potential = np.zeros(dimension)
-        self.logger = logging.getLogger(__name__)
 
     def detect_resonance(self, story1: Story, story2: Story) -> float:
         """Calculate resonance between two stories"""
@@ -435,21 +440,88 @@ class NarrativeField:
         self.field_memory.append(event)
 
 
-class StoryPhysics:
+class StoryPhysics(BaseClass):
     """Handles physical behavior of stories in the field"""
 
-    def __init__(
-        self,
-        damping: float = 0.95,  # Increased damping
-        attraction_strength: float = 0.1,  # Reduced strength
-        max_force: float = 1.0,  # Force limiting
-        max_velocity: float = 0.5,
-    ):  # Velocity limiting
+    def __init__(self,
+                 damping: float = 0.95,
+                 attraction_strength: float = 0.2,
+                 repulsion_strength: float = 0.1,
+                 min_distance: float = 0.5,
+                 interaction_range: float = 2.0,
+                 random_force: float = 0.05,
+                 max_force: float = 0.3,
+                 max_velocity: float = 0.2,
+                 target_zone_radius: float = 10.0):
+        super().__init__()
+        # Physics parameters
         self.damping = damping
         self.attraction_strength = attraction_strength
+        self.repulsion_strength = repulsion_strength
+        self.min_distance = min_distance
+        self.interaction_range = interaction_range
+        self.random_force = random_force
+
+        # Movement limits
         self.max_force = max_force
         self.max_velocity = max_velocity
-        self.logger = logging.getLogger(__name__)
+        self.target_zone_radius = target_zone_radius
+
+    def update_story_motion(self, story: Story, field: NarrativeField, timestep: int):
+        """Update story position and velocity with balanced forces"""
+        net_force = np.zeros(3)
+
+        # Forces from other stories
+        for other in field.stories:
+            if other.id != story.id:
+                direction = other.position - story.position
+                distance = np.linalg.norm(direction) + 1e-6
+                direction_normalized = direction / distance
+
+                # Resonance-based attraction
+                resonance = field.detect_resonance(story, other)
+                attraction = self.attraction_strength * resonance * direction_normalized
+
+                # Distance-based repulsion
+                repulsion = -self.repulsion_strength * direction_normalized / (distance**2)
+                if distance < self.min_distance:
+                    repulsion *= 2.0  # Stronger repulsion when too close
+
+                net_force += attraction + repulsion
+
+        # Containment force - quadratic increase with distance
+        displacement = story.position
+        distance_from_center = np.linalg.norm(displacement)
+        if distance_from_center > self.target_zone_radius:
+            containment = -0.1 * (distance_from_center / self.target_zone_radius)**2 * displacement
+            net_force += containment
+
+        # Random exploration force - varies with time
+        random_direction = np.random.randn(3)
+        random_direction /= np.linalg.norm(random_direction)
+        exploration_force = self.random_force * random_direction * np.sin(timestep / 100)
+        net_force += exploration_force
+
+        # Balance z-axis movement
+        net_force[2] *= 0.3  # Reduce but don't eliminate z-axis movement
+
+        # Apply force limits
+        net_force = self._normalize_force(net_force)
+
+        # Update velocity with damping
+        story.velocity = self._limit_velocity((1 - self.damping) * story.velocity + net_force)
+
+        # Update position
+        story.position += story.velocity
+
+        # Log significant movements
+        if timestep % 100 == 0:
+            self.logger.debug(
+                f"Story {story.id} at t={timestep}:\n"
+                f"  Position: {story.position}\n"
+                f"  Velocity: {np.linalg.norm(story.velocity):.3f}\n"
+                f"  Force: {np.linalg.norm(net_force):.3f}"
+            )
 
     def _normalize_force(self, force: np.ndarray) -> np.ndarray:
         """Normalize force vector to prevent exponential growth"""
@@ -465,47 +537,28 @@ class StoryPhysics:
             return (velocity / magnitude) * self.max_velocity
         return velocity
 
-    def update_story_motion(self, story: Story, field: NarrativeField, timestep: int):
-        """Update story position and velocity based on field forces"""
-        # Compute net force from other stories
-        net_force = np.zeros(3)
-        for other in field.stories:
-            if other.id != story.id:
-                # Compute force based on resonance
-                resonance = field.detect_resonance(story, other)
-                direction = other.position - story.position
-                distance = np.linalg.norm(direction) + 1e-6  # Prevent division by zero
+    def apply_field_constraints(self, stories: List[Story]):
+        """Apply global constraints to all stories"""
+        # Find center of mass
+        com = np.mean([s.position for s in stories], axis=0)
 
-                # Scale force by distance with a minimum threshold
-                force = self.attraction_strength * resonance * direction / distance
-                net_force += force
-
-        # Normalize and limit forces
-        net_force = self._normalize_force(net_force)
-
-        # Update velocity with damping
-        story.velocity = self._limit_velocity(
-            (1 - self.damping) * story.velocity + net_force
-        )
-
-        # Update position
-        story.position += story.velocity
-
-        self.logger.debug(
-            f"Story {story.id} - "
-            f"Position: {story.position}, "
-            f"Velocity: {np.linalg.norm(story.velocity):.3f}"
-        )
+        # If stories are drifting too far as a group, pull them back
+        if np.linalg.norm(com) > 5.0:
+            for story in stories:
+                # Apply centering force proportional to distance from origin
+                centering = -0.1 * story.position
+                story.velocity += self._normalize_force(centering)
+                story.velocity = self._limit_velocity(story.velocity)
 
 
-class EnhancedCollectiveStoryEngine:
+class EnhancedCollectiveStoryEngine(BaseClass):
     """Enhanced version with more sophisticated pattern detection"""
 
     def __init__(self, field: NarrativeField):
+        super().__init__()
         self.field = field
         self.collective_memories = []
         self.story_states: Dict[str, StoryState] = {}
-        self.logger = logging.getLogger(__name__)
         self.collective_story = ""  # Add this line to initialize the collective story
 
     async def update_story_states(self):
@@ -586,16 +639,15 @@ class EnhancedCollectiveStoryEngine:
         return f"Story {story.id} resonates with {', '.join(story.themes[:3])}, its journey marked by {len(story.memory_layer)} memories."
 
 
-class ThemeEvolutionEngine:
+class ThemeEvolutionEngine(BaseClass):
     """Handles theme evolution and perspective shifts"""
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        super().__init__()
         self.theme_resonance = {}  # Track theme relationships
-        self.logger = logging.getLogger(__name__)
 
 
-class EnhancedInteractionEngine:
+class EnhancedInteractionEngine(BaseClass):
     # ... (other methods remain the same)
 
     async def process_interaction(self, story1: Story, story2: Story):
@@ -634,10 +686,10 @@ class EnhancedInteractionEngine:
     # ... (rest of the class remains the same)
 
 
-class StoryInteractionEngine:
+class StoryInteractionEngine(BaseClass):
     def __init__(self, field: NarrativeField):
+        super().__init__()
         self.field = field
-        self.logger = logging.getLogger(__name__)
 
     async def process_interaction(self, story1: Story, story2: Story):
         # Basic interaction processing
@@ -711,151 +763,11 @@ class EnhancedInteractionEngine(StoryInteractionEngine):
         return 0.5  # Return a value between 0 and 1
 
 
-class StoryPhysics:
-    """Handles physical behavior of stories in the field"""
-
-    def __init__(self):
-        # Physics parameters
-        self.damping = 0.95  # Slightly reduced damping
-        self.attraction_strength = 0.2  # Stronger attraction
-        self.repulsion_strength = 0.1  # Add repulsion to prevent collapse
-        self.min_distance = 0.5  # Minimum distance between stories
-        self.interaction_range = 2.0  # Range for story interactions
-        self.random_force = 0.05  # Small random force for exploration
-
-        # Movement limits
-        self.max_force = 0.3
-        self.max_velocity = 0.2
-        self.target_zone_radius = 10.0  # Desired story movement range
-
-        self.logger = logging.getLogger(__name__)
-
-    def update_story_motion(self, story: Story, field: NarrativeField, timestep: int):
-        """Update story position and velocity with balanced forces"""
-        net_force = np.zeros(3)
-
-        # Forces from other stories
-        for other in field.stories:
-            if other.id != story.id:
-                direction = other.position - story.position
-                distance = np.linalg.norm(direction) + 1e-6
-                direction_normalized = direction / distance
-
-                # Resonance-based attraction
-                resonance = field.detect_resonance(story, other)
-                attraction = self.attraction_strength * resonance * direction_normalized
-
-                # Distance-based repulsion
-                repulsion = (
-                    -self.repulsion_strength * direction_normalized / (distance**2)
-                )
-                if distance < self.min_distance:
-                    repulsion *= 2.0  # Stronger repulsion when too close
-
-                net_force += attraction + repulsion
-
-        # Containment force - quadratic increase with distance
-        displacement = story.position
-        distance_from_center = np.linalg.norm(displacement)
-        if distance_from_center > self.target_zone_radius:
-            containment = (
-                -0.1
-                * (distance_from_center / self.target_zone_radius) ** 2
-                * displacement
-            )
-            net_force += containment
-
-        # Random exploration force - varies with time
-        random_direction = np.random.randn(3)
-        random_direction /= np.linalg.norm(random_direction)
-        exploration_force = (
-            self.random_force * random_direction * np.sin(timestep / 100)
-        )
-        net_force += exploration_force
-
-        # Balance z-axis movement
-        net_force[2] *= 0.3  # Reduce but don't eliminate z-axis movement
-
-        # Apply force limits
-        net_force = self._normalize_force(net_force)
-
-        # Update velocity with damping
-        story.velocity = self._limit_velocity(
-            (1 - self.damping) * story.velocity + net_force
-        )
-
-        # Update position
-        story.position += story.velocity
-
-        # Log significant movements
-        if timestep % 100 == 0:
-            self.logger.debug(
-                f"Story {story.id} at t={timestep}:\n"
-                f"  Position: {story.position}\n"
-                f"  Velocity: {np.linalg.norm(story.velocity):.3f}\n"
-                f"  Force: {np.linalg.norm(net_force):.3f}"
-            )
-
-    def _normalize_force(self, force: np.ndarray) -> np.ndarray:
-        """Normalize force vector to prevent exponential growth"""
-        magnitude = np.linalg.norm(force)
-        if magnitude > self.max_force:
-            return (force / magnitude) * self.max_force
-        return force
-
-    def _limit_velocity(self, velocity: np.ndarray) -> np.ndarray:
-        """Limit velocity magnitude"""
-        magnitude = np.linalg.norm(velocity)
-        if magnitude > self.max_velocity:
-            return (velocity / magnitude) * self.max_velocity
-        return velocity
-
-    def apply_field_constraints(self, stories: List[Story]):
-        """Apply global constraints to all stories"""
-        # Find center of mass
-        com = np.mean([s.position for s in stories], axis=0)
-
-        # If stories are drifting too far as a group, pull them back
-        if np.linalg.norm(com) > 5.0:
-            for story in stories:
-                # Apply centering force proportional to distance from origin
-                centering = -0.1 * story.position
-                story.velocity += self._normalize_force(centering)
-                story.velocity = self._limit_velocity(story.velocity)
-
-    def _normalize_force(self, force: np.ndarray) -> np.ndarray:
-        """Normalize force vector to prevent exponential growth"""
-        magnitude = np.linalg.norm(force)
-        if magnitude > self.max_force:
-            return (force / magnitude) * self.max_force
-        return force
-
-    def _limit_velocity(self, velocity: np.ndarray) -> np.ndarray:
-        """Limit velocity magnitude"""
-        magnitude = np.linalg.norm(velocity)
-        if magnitude > self.max_velocity:
-            return (velocity / magnitude) * self.max_velocity
-        return velocity
-
-    def apply_field_constraints(self, stories: List[Story]):
-        """Apply global constraints to all stories"""
-        # Find center of mass
-        com = np.mean([s.position for s in stories], axis=0)
-
-        # If stories are drifting too far as a group, pull them back
-        if np.linalg.norm(com) > 5.0:
-            for story in stories:
-                # Apply centering force proportional to distance from origin
-                centering = -0.1 * story.position
-                story.velocity += self._normalize_force(centering)
-                story.velocity = self._limit_velocity(story.velocity)
-
-
-class StoryJourneyLogger:
+class StoryJourneyLogger(BaseClass):
     """Tracks and logs the journey of stories through the narrative field"""
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        super().__init__()
         self.journey_log = {}
         self.total_distances = {}  # Track cumulative distance for each story
         self.significant_events = []  # Track important moments
@@ -884,126 +796,6 @@ class StoryJourneyLogger:
             f"    {story2.id}: {story2.position}\n"
         )
         self.logger.info(log_entry)
-
-    def log_story_state(self, story: Story, timestep: float):
-        """Log detailed story state and track journey metrics"""
-        if story.id not in self.journey_log:
-            self.journey_log[story.id] = []
-            self.total_distances[story.id] = 0.0
-
-        # Calculate movement since last state
-        if self.journey_log[story.id]:
-            last_pos = self.journey_log[story.id][-1]["position"]
-            movement = np.linalg.norm(story.position - last_pos)
-            self.total_distances[story.id] += movement
-
-            # Log significant movements
-            if movement > 0.5:  # Threshold for significant movement
-                self.significant_events.append(
-                    {
-                        "type": "movement",
-                        "time": timestep,
-                        "story_id": story.id,
-                        "distance": movement,
-                        "direction": story.velocity
-                        / (np.linalg.norm(story.velocity) + 1e-6),
-                    }
-                )
-
-        # Store current state
-        state = {
-            "timestep": timestep,
-            "position": story.position.copy(),
-            "velocity": story.velocity.copy(),
-            "memory_count": len(story.memory_layer),
-            "perspective_sum": story.perspective_filter.sum(),
-            "total_distance": self.total_distances[story.id],
-        }
-        self.journey_log[story.id].append(state)
-
-    def summarize_journey(self, story: Story):
-        """Enhanced journey summary with accumulated perspective shifts"""
-        journey = self.journey_log.get(story.id, [])
-        if not journey:
-            return
-
-        start_state = journey[0]
-        end_state = journey[-1]
-
-        # Calculate metrics
-        total_distance = self.total_distances[story.id]
-        direct_distance = np.linalg.norm(
-            end_state["position"] - start_state["position"]
-        )
-        wandering_ratio = total_distance / (direct_distance + 1e-6)
-
-        # Perspective analysis
-        significant_shifts = [
-            s for s in story.perspective_shifts if s["magnitude"] > 0.01
-        ]
-        avg_shift = (
-            np.mean([s["magnitude"] for s in significant_shifts])
-            if significant_shifts
-            else 0
-        )
-
-        # Safely get unique interactions
-        unique_interactions = {
-            m["interacted_with"]
-            for m in story.memory_layer
-            if "interacted_with" in m
-        }
-        num_unique_interactions = len(unique_interactions)
-
-        self.logger.info(
-            f"\n=== Journey Summary for {story.id} ===\n"
-            f"Movement Metrics:\n"
-            f"  Total Distance Traveled: {total_distance:.2f}\n"
-            f"  Direct Distance (start to end): {direct_distance:.2f}\n"
-            f"  Wandering Ratio: {wandering_ratio:.2f}\n"
-            f"\nInteraction Metrics:\n"
-            f"  Memories Formed: {len(story.memory_layer)}\n"
-            f"  Unique Interactions: {num_unique_interactions}\n"
-            f"  Total Perspective Shift: {story.total_perspective_shift:.4f}\n"
-            f"  Average Shift Magnitude: {avg_shift:.4f}\n"
-            f"  Significant Perspective Changes: {len(significant_shifts)}\n"
-            f"\nFinal State:\n"
-            f"  Position: {end_state['position']}\n"
-            f"  Velocity: {end_state['velocity']}\n"
-            f"\nSignificant Events: {len(story.memory_layer)}"
-        )
-
-
-class JourneyLogger:
-    def log_interaction(
-        self, story1: Story, story2: Story, resonance: float, interaction_type: str
-    ):
-        latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
-        perspective_shift = latest_memory.get("perspective_shift", 0)
-
-        # If perspective_shift is a coroutine, we need to run it in an event loop
-        if asyncio.iscoroutine(perspective_shift):
-            perspective_shift = asyncio.get_event_loop().run_until_complete(
-                perspective_shift
-            )
-
-        log_entry = (
-            f"Interaction between {story1.id} and {story2.id}:\n"
-            f"  Resonance: {resonance:.2f}\n"
-            f"  Interaction Type: {interaction_type}\n"
-            f"  Perspective Shift: {perspective_shift:.4f}\n"
-            f"  Shared Themes: {set(story1.themes) & set(story2.themes)}\n"
-            f"  Distance: {np.linalg.norm(story1.position - story2.position):.2f}\n"
-            f"  Positions:\n"
-            f"    {story1.id}: {story1.position}\n"
-            f"    {story2.id}: {story2.position}\n"
-        )
-        self.logger.info(log_entry)
-
-    def _format_emotional_change(self, story: Story) -> str:
-        return ", ".join(
-            [f"{e}: {v:.2f}" for e, v in story.emotional_state.get_dominant_emotions()]
-        )
 
     def log_story_state(self, story: Story, timestep: float):
         """Log detailed story state and track journey metrics"""
@@ -1132,11 +924,11 @@ def summarize_story_journey(story: Story):
     }
 
 
-class DynamicThemeGenerator:
+class DynamicThemeGenerator(BaseClass):
     def __init__(self, llm: LanguageModel):
+        super().__init__()
         self.llm = llm
         self.theme_cache = set()
-        self.logger = logging.getLogger(__name__)
 
     async def generate_themes(self, context: str, num_themes: int = 3) -> List[str]:
         prompt = f"""Given the context '{context}', generate {num_themes} unique, single-word themes that could be present in a story. Output ONLY a valid JSON array of strings, nothing else. Example:
@@ -1174,11 +966,11 @@ class DynamicThemeGenerator:
         )
 
 
-class DynamicStoryGenerator:
+class DynamicStoryGenerator(BaseClass):
     def __init__(self, llm: LanguageModel, theme_generator: DynamicThemeGenerator):
+        super().__init__()
         self.llm = llm
         self.theme_generator = theme_generator
-        self.logger = logging.getLogger(__name__)
 
     async def generate_story(self, field: NarrativeField) -> Story:
         themes = await self.theme_generator.generate_themes("Create a new story")
@@ -1216,10 +1008,10 @@ class DynamicStoryGenerator:
         return EmotionalState(description, np.array(embedding))
 
 
-class EnvironmentalEventGenerator:
+class EnvironmentalEventGenerator(BaseClass):
     def __init__(self, llm: LanguageModel):
+        super().__init__()
         self.llm = llm
-        self.logger = logging.getLogger(__name__)
 
     async def generate_event(self) -> Dict[str, Any]:
         prompt = "Generate a random positive or negative environmental event for a narrative field. Include an event name, description, and intensity (0.0 to 1.0)."

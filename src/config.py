@@ -21,7 +21,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
                 "Mistral-Nemo-Instruct-2407-GGUF/"
                 "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
             ).expanduser(),
-            "model_name": "mistral-nemo:latest",
+            "model_name": "llama3.2:latest",  # "mistral-nemo:latest",
         },
         "embedding": {
             "path": Path(
@@ -33,7 +33,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         },
         "optimal_config": {
             "n_gpu_layers": -1,
-            "n_batch": 512,
+            "n_batch": 1024,
             "n_ctx": 16384,
             "metal_device": "mps",
             "main_gpu": 0,
