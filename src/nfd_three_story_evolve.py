@@ -1333,7 +1333,7 @@ async def simulate_field():
                             f"  Shared Themes: {set(story1.themes) & set(story2.themes)}"
                         )
                         logger.info(f"  Distance: {distance:.2f}")
-                        logger.info(f"  Positions:")
+                        logger.info("  Positions:")
                         logger.info(f"    {story1.id}: {story1.position}")
                         logger.info(f"    {story2.id}: {story2.position}")
                         logger.info(f"\nInteraction Details:")
