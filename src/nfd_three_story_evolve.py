@@ -225,11 +225,11 @@ class Story:
 
     async def update_perspective(
         self,
-        other_story: 'Story',
+        other_story: "Story",
         theme_impact: float,
         resonance: float,
         emotional_change: float,
-        interaction_type: str
+        interaction_type: str,
     ) -> float:
         # Calculate perspective shift based on interaction factors
         shift = theme_impact * resonance * emotional_change * 0.1
@@ -309,11 +309,11 @@ class Story:
 
     async def update_state(self, avg_resonance: float, avg_shift: float) -> float:
         # Update the story's state based on recent interactions
-        await self.emotional_state.update(
-            interaction_strength=avg_resonance * 0.1
-        )
+        await self.emotional_state.update(interaction_strength=avg_resonance * 0.1)
         shift = avg_shift * 0.1
-        self.perspective_filter += shift  # Small perspective update based on average shift
+        self.perspective_filter += (
+            shift  # Small perspective update based on average shift
+        )
         return shift
 
 
@@ -507,6 +507,7 @@ class EnhancedCollectiveStoryEngine:
         self.collective_memories = []
         self.story_states: Dict[str, StoryState] = {}
         self.logger = logging.getLogger(__name__)
+        self.collective_story = ""  # Add this line to initialize the collective story
 
     async def update_story_states(self):
         for story in self.field.stories:
@@ -521,7 +522,7 @@ class EnhancedCollectiveStoryEngine:
                     if asyncio.iscoroutine(shift):
                         shift = await shift
                     perspective_shifts.append(shift)
-                
+
                 avg_shift = np.mean(perspective_shifts)
 
                 # Update story state based on recent interactions
@@ -565,6 +566,26 @@ class EnhancedCollectiveStoryEngine:
 
         self.collective_memories.append(pulse)
 
+    def write_collective_story(self):
+        """Generate and update the collective story based on current field state"""
+        emergent_themes = self.detect_emergent_themes()
+        story_summaries = [self.summarize_story(story) for story in self.field.stories]
+
+        collective_narrative = (
+            f"The narrative field pulses with {len(self.field.stories)} stories. "
+        )
+        collective_narrative += f"Emergent themes of {', '.join(emergent_themes)} weave through the collective consciousness. "
+
+        for summary in story_summaries:
+            collective_narrative += f"{summary} "
+
+        self.collective_story = collective_narrative
+        self.logger.info(f"Updated collective story: {self.collective_story[:100]}...")
+
+    def summarize_story(self, story: Story) -> str:
+        """Generate a brief summary of a story's current state"""
+        return f"Story {story.id} resonates with {', '.join(story.themes[:3])}, its journey marked by {len(story.memory_layer)} memories."
+
 
 class ThemeEvolutionEngine:
     """Handles theme evolution and perspective shifts"""
@@ -573,6 +594,7 @@ class ThemeEvolutionEngine:
         self.logger = logging.getLogger(__name__)
         self.theme_resonance = {}  # Track theme relationships
         self.logger = logging.getLogger(__name__)
+
 
 class EnhancedInteractionEngine:
     # ... (other methods remain the same)
@@ -592,7 +614,9 @@ class EnhancedInteractionEngine:
                 story2, theme_impact, resonance, emotional_change, interaction_type
             )
 
-            await story1.update_emotional_state(story2, interaction_type, resonance, self.llm)
+            await story1.update_emotional_state(
+                story2, interaction_type, resonance, self.llm
+            )
 
             # Add memory of interaction
             memory = {
@@ -660,7 +684,9 @@ class EnhancedInteractionEngine(StoryInteractionEngine):
                 story2, theme_impact, resonance, emotional_change, interaction_type
             )
 
-            await story1.update_emotional_state(story2, interaction_type, resonance, self.llm)
+            await story1.update_emotional_state(
+                story2, interaction_type, resonance, self.llm
+            )
 
             # Add memory of interaction
             memory = {
@@ -835,13 +861,17 @@ class StoryJourneyLogger:
         self.total_distances = {}  # Track cumulative distance for each story
         self.significant_events = []  # Track important moments
 
-    def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
+    def log_interaction(
+        self, story1: Story, story2: Story, resonance: float, interaction_type: str
+    ):
         latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
-        perspective_shift = latest_memory.get('perspective_shift', 0)
-        
+        perspective_shift = latest_memory.get("perspective_shift", 0)
+
         # If perspective_shift is a coroutine, we need to run it in an event loop
         if asyncio.iscoroutine(perspective_shift):
-            perspective_shift = asyncio.get_event_loop().run_until_complete(perspective_shift)
+            perspective_shift = asyncio.get_event_loop().run_until_complete(
+                perspective_shift
+            )
 
         log_entry = (
             f"Interaction between {story1.id} and {story2.id}:\n"
@@ -876,7 +906,8 @@ class StoryJourneyLogger:
                         "time": timestep,
                         "story_id": story.id,
                         "distance": movement,
-                        "direction": story.velocity / (np.linalg.norm(story.velocity) + 1e-6),
+                        "direction": story.velocity
+                        / (np.linalg.norm(story.velocity) + 1e-6),
                     }
                 )
 
@@ -902,15 +933,25 @@ class StoryJourneyLogger:
 
         # Calculate metrics
         total_distance = self.total_distances[story.id]
-        direct_distance = np.linalg.norm(end_state["position"] - start_state["position"])
+        direct_distance = np.linalg.norm(
+            end_state["position"] - start_state["position"]
+        )
         wandering_ratio = total_distance / (direct_distance + 1e-6)
 
         # Perspective analysis
-        significant_shifts = [s for s in story.perspective_shifts if s["magnitude"] > 0.01]
-        avg_shift = np.mean([s["magnitude"] for s in significant_shifts]) if significant_shifts else 0
+        significant_shifts = [
+            s for s in story.perspective_shifts if s["magnitude"] > 0.01
+        ]
+        avg_shift = (
+            np.mean([s["magnitude"] for s in significant_shifts])
+            if significant_shifts
+            else 0
+        )
 
         # Safely get unique interactions
-        unique_interactions = set(m["interacted_with"] for m in story.memory_layer if "interacted_with" in m)
+        unique_interactions = set(
+            m["interacted_with"] for m in story.memory_layer if "interacted_with" in m
+        )
         num_unique_interactions = len(unique_interactions)
 
         self.logger.info(
@@ -931,14 +972,19 @@ class StoryJourneyLogger:
             f"\nSignificant Events: {len(story.memory_layer)}"
         )
 
+
 class JourneyLogger:
-    def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
+    def log_interaction(
+        self, story1: Story, story2: Story, resonance: float, interaction_type: str
+    ):
         latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
-        perspective_shift = latest_memory.get('perspective_shift', 0)
-        
+        perspective_shift = latest_memory.get("perspective_shift", 0)
+
         # If perspective_shift is a coroutine, we need to run it in an event loop
         if asyncio.iscoroutine(perspective_shift):
-            perspective_shift = asyncio.get_event_loop().run_until_complete(perspective_shift)
+            perspective_shift = asyncio.get_event_loop().run_until_complete(
+                perspective_shift
+            )
 
         log_entry = (
             f"Interaction between {story1.id} and {story2.id}:\n"
@@ -1138,8 +1184,10 @@ class DynamicStoryGenerator:
         content = await self.llm.generate(prompt)
 
         # Extract the protagonist's name from the first sentence
-        first_sentence = content.split('.')[0]
-        protagonist_name = first_sentence.split()[0]  # Assume the first word is the name
+        first_sentence = content.split(".")[0]
+        protagonist_name = first_sentence.split()[
+            0
+        ]  # Assume the first word is the name
 
         embedding = await self.llm.generate_embedding(content)
 
@@ -1155,7 +1203,7 @@ class DynamicStoryGenerator:
             themes=themes,
             emotional_state=emotional_state,
             field=field,
-            protagonist_name=protagonist_name
+            protagonist_name=protagonist_name,
         )
 
     async def generate_emotional_state(self, content: str) -> EmotionalState:
@@ -1230,7 +1278,7 @@ async def simulate_field():
     interaction_engine = EnhancedInteractionEngine(field, llm)
 
     # Generate initial stories
-    for _ in range(2):
+    for _ in range(1):
         story = await story_generator.generate_story(field)
         field.add_story(story)
 
@@ -1247,7 +1295,7 @@ async def simulate_field():
             journey_logger.log_story_state(story, t)
 
         # Occasionally generate new stories
-        if t % 50 == 0 and len(field.stories) < 10:
+        if t % 17 == 0 and len(field.stories) < 10:
             new_story = await story_generator.generate_story(field)
             field.add_story(new_story)
             logger.info(f"New story added: {new_story.id}")
@@ -1268,25 +1316,35 @@ async def simulate_field():
 
         # Check for interactions
         for i, story1 in enumerate(field.stories):
-            for story2 in field.stories[i + 1:]:
+            for story2 in field.stories[i + 1 :]:
                 distance = np.linalg.norm(story1.position - story2.position)
                 if distance < field.interaction_range:
-                    resonance, interaction_type = await interaction_engine.process_interaction(story1, story2)
+                    resonance, interaction_type = (
+                        await interaction_engine.process_interaction(story1, story2)
+                    )
                     if resonance > 0:
                         logger.info(f"\nSignificant Interaction:")
                         logger.info(f"  {story1.id} <-> {story2.id}")
                         logger.info(f"  Resonance: {resonance:.2f}")
-                        logger.info(f"  Shared Themes: {set(story1.themes) & set(story2.themes)}")
+                        logger.info(
+                            f"  Shared Themes: {set(story1.themes) & set(story2.themes)}"
+                        )
                         logger.info(f"  Distance: {distance:.2f}")
                         logger.info(f"  Positions:")
                         logger.info(f"    {story1.id}: {story1.position}")
                         logger.info(f"    {story2.id}: {story2.position}")
                         logger.info(f"\nInteraction Details:")
                         logger.info(f"  Interaction Type: {interaction_type}")
-                        logger.info(f"  Perspective Shift: {story1.total_perspective_shift:.4f}")
+                        logger.info(
+                            f"  Perspective Shift: {story1.total_perspective_shift:.4f}"
+                        )
                         logger.info(f"\nEmotional Impact:")
-                        logger.info(f"  {story1.id} Emotional State: {story1.emotional_state}")
-                        logger.info(f"  {story2.id} Emotional State: {story2.emotional_state}")
+                        logger.info(
+                            f"  {story1.id} Emotional State: {story1.emotional_state}"
+                        )
+                        logger.info(
+                            f"  {story2.id} Emotional State: {story2.emotional_state}"
+                        )
 
         # Update story states
         await collective_engine.update_story_states()
@@ -1295,7 +1353,14 @@ async def simulate_field():
         await visualizer.capture_state(field, t)
 
         # Occasionally generate field pulses and detect patterns
-        if t % 100 == 0:
+        if t % 30 == 0:
+            collective_engine.write_collective_story()
+            logger.info(
+                f"Collective story at timestep {t}: {collective_engine.collective_story[:500]}..."
+            )
+            logger.debug(f"Collective story written at timestep {t}")
+            logger.debug(f"Collective story: {collective_engine.collective_story}")
+
             collective_engine.generate_field_pulse("seeking_connection", 0.5)
             emergent_themes = collective_engine.detect_emergent_themes()
             logger.info(f"Timestep {t} - Emergent themes: {emergent_themes}")
@@ -1312,7 +1377,9 @@ async def simulate_field():
             for story2 in field.stories[i + 1 :]:
                 distance = np.linalg.norm(story1.position - story2.position)
                 if distance < field.interaction_range:
-                    resonance, interaction_type = await interaction_engine.process_interaction(story1, story2)
+                    resonance, interaction_type = (
+                        await interaction_engine.process_interaction(story1, story2)
+                    )
                     journey_logger.log_interaction(
                         story1, story2, resonance, interaction_type
                     )
@@ -1330,4 +1397,3 @@ async def simulate_field():
 
 if __name__ == "__main__":
     asyncio.run(simulate_field())
-
