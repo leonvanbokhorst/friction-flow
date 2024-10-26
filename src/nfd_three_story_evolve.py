@@ -74,12 +74,11 @@ class ThemeRelationshipMap:
         if (theme2, theme1) in self.primary_relationships:
             return self.primary_relationships[(theme2, theme1)]
 
-        # Check theme groups
-        shared_groups = 0
-        for group in self.theme_groups.values():
-            if theme1 in group and theme2 in group:
-                shared_groups += 1
-
+        shared_groups = sum(
+            1
+            for group in self.theme_groups.values()
+            if theme1 in group and theme2 in group
+        )
         return 0.3 * shared_groups if shared_groups > 0 else 0.1
 
 
