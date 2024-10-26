@@ -114,7 +114,7 @@ class ThemeEvolutionEngine(BaseClass):
     def update_theme_resonance(self, theme: str, resonance: float):
         self.theme_resonance[theme] = resonance
 
-    def evolve_themes(self, story: 'Story', interaction_history):
+    def evolve_themes(self, story: "Story", interaction_history):
         new_themes = set()
         for interaction in interaction_history[-10:]:  # Consider last 10 interactions
             if interaction["resonance"] > 0.5:
@@ -347,7 +347,7 @@ class Story(BaseClass):
             interaction_type="environmental_event",
             resonance=intensity,
             themes=[],
-            emotional_impact=intensity * 0.2
+            emotional_impact=intensity * 0.2,
         )
         self.add_memory(memory)
 
@@ -490,16 +490,18 @@ class NarrativeField(BaseClass):
 class StoryPhysics(BaseClass):
     """Handles physical behavior of stories in the field"""
 
-    def __init__(self,
-                 damping: float = 0.95,
-                 attraction_strength: float = 0.2,
-                 repulsion_strength: float = 0.1,
-                 min_distance: float = 0.5,
-                 interaction_range: float = 2.0,
-                 random_force: float = 0.05,
-                 max_force: float = 0.3,
-                 max_velocity: float = 0.2,
-                 target_zone_radius: float = 10.0):
+    def __init__(
+        self,
+        damping: float = 0.95,
+        attraction_strength: float = 0.2,
+        repulsion_strength: float = 0.1,
+        min_distance: float = 0.5,
+        interaction_range: float = 2.0,
+        random_force: float = 0.05,
+        max_force: float = 0.3,
+        max_velocity: float = 0.2,
+        target_zone_radius: float = 10.0,
+    ):
         super().__init__()
         # Physics parameters
         self.damping = damping
@@ -530,7 +532,9 @@ class StoryPhysics(BaseClass):
                 attraction = self.attraction_strength * resonance * direction_normalized
 
                 # Distance-based repulsion
-                repulsion = -self.repulsion_strength * direction_normalized / (distance**2)
+                repulsion = (
+                    -self.repulsion_strength * direction_normalized / (distance**2)
+                )
                 if distance < self.min_distance:
                     repulsion *= 2.0  # Stronger repulsion when too close
 
@@ -540,13 +544,19 @@ class StoryPhysics(BaseClass):
         displacement = story.position
         distance_from_center = np.linalg.norm(displacement)
         if distance_from_center > self.target_zone_radius:
-            containment = -0.1 * (distance_from_center / self.target_zone_radius)**2 * displacement
+            containment = (
+                -0.1
+                * (distance_from_center / self.target_zone_radius) ** 2
+                * displacement
+            )
             net_force += containment
 
         # Random exploration force - varies with time
         random_direction = np.random.randn(3)
         random_direction /= np.linalg.norm(random_direction)
-        exploration_force = self.random_force * random_direction * np.sin(timestep / 100)
+        exploration_force = (
+            self.random_force * random_direction * np.sin(timestep / 100)
+        )
         net_force += exploration_force
 
         # Balance z-axis movement
@@ -556,7 +566,9 @@ class StoryPhysics(BaseClass):
         net_force = self._normalize_force(net_force)
 
         # Update velocity with damping
-        story.velocity = self._limit_velocity((1 - self.damping) * story.velocity + net_force)
+        story.velocity = self._limit_velocity(
+            (1 - self.damping) * story.velocity + net_force
+        )
 
         # Update position
         story.position += story.velocity
@@ -612,9 +624,7 @@ class EnhancedCollectiveStoryEngine(BaseClass):
         for story in self.field.stories:
             recent_memories = story.memory_layer[-5:]  # Get the 5 most recent memories
             if recent_memories:
-                avg_resonance = np.mean(
-                    [m.resonance for m in recent_memories]
-                )
+                avg_resonance = np.mean([m.resonance for m in recent_memories])
                 perspective_shifts = []
                 for m in recent_memories:
                     shift = m.emotional_impact
@@ -695,11 +705,11 @@ class ThemeManager(BaseClass):
     async def process_theme_interaction(self, story1: Story, story2: Story):
         shared_themes = set(story1.themes) & set(story2.themes)
         theme_impact = len(shared_themes) / max(len(story1.themes), len(story2.themes))
-        
+
         for theme in shared_themes:
             resonance = self.relationship_map.get_theme_resonance(theme, theme)
             self.evolution_engine.update_theme_resonance(theme, resonance)
-        
+
         return theme_impact
 
     def get_theme_resonance(self, theme1: str, theme2: str) -> float:
@@ -737,10 +747,14 @@ class EnhancedInteractionEngine(BaseInteractionEngine):
     async def determine_interaction_type(self, story1: Story, story2: Story) -> str:
         # Calculate the similarity between the stories' themes
         shared_themes = set(story1.themes) & set(story2.themes)
-        theme_similarity = len(shared_themes) / max(len(story1.themes), len(story2.themes))
+        theme_similarity = len(shared_themes) / max(
+            len(story1.themes), len(story2.themes)
+        )
 
         # Calculate emotional state similarity
-        emotional_similarity = self.field._calculate_emotional_similarity(story1, story2)
+        emotional_similarity = self.field._calculate_emotional_similarity(
+            story1, story2
+        )
 
         # Determine interaction type based on similarities
         if theme_similarity > 0.5 and emotional_similarity > 0.5:
@@ -758,7 +772,9 @@ class EnhancedInteractionEngine(BaseInteractionEngine):
         resonance = self.field.detect_resonance(story1, story2)
 
         if resonance > self.field.resonance_threshold:
-            theme_impact = await self.field.theme_manager.process_theme_interaction(story1, story2)
+            theme_impact = await self.field.theme_manager.process_theme_interaction(
+                story1, story2
+            )
             emotional_change = self._calculate_emotional_influence(story1, story2)
 
             perspective_shift = await story1.update_perspective(
@@ -776,7 +792,7 @@ class EnhancedInteractionEngine(BaseInteractionEngine):
                 resonance=resonance,
                 themes=list(set(story1.themes) & set(story2.themes)),
                 emotional_impact=emotional_change,
-                partner_id=story2.id
+                partner_id=story2.id,
             )
             story1.add_memory(memory)
 
@@ -803,7 +819,9 @@ class EnhancedJourneyLogger(BaseClass):
         self.significant_events = []
         self.emotional_history = {}
 
-    def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
+    def log_interaction(
+        self, story1: Story, story2: Story, resonance: float, interaction_type: str
+    ):
         latest_memory = story1.memory_layer[-1] if story1.memory_layer else None
         perspective_shift = latest_memory.emotional_impact if latest_memory else 0
 
@@ -837,13 +855,16 @@ class EnhancedJourneyLogger(BaseClass):
 
             # Log significant movements
             if movement > 0.5:  # Threshold for significant movement
-                self.significant_events.append({
-                    "type": "movement",
-                    "time": timestep,
-                    "story_id": story.id,
-                    "distance": movement,
-                    "direction": story.velocity / (np.linalg.norm(story.velocity) + 1e-6),
-                })
+                self.significant_events.append(
+                    {
+                        "type": "movement",
+                        "time": timestep,
+                        "story_id": story.id,
+                        "distance": movement,
+                        "direction": story.velocity
+                        / (np.linalg.norm(story.velocity) + 1e-6),
+                    }
+                )
 
         # Store current state
         state = {
@@ -859,12 +880,14 @@ class EnhancedJourneyLogger(BaseClass):
     def log_emotional_state(self, story: Story):
         if story.id not in self.emotional_history:
             self.emotional_history[story.id] = []
-        
-        self.emotional_history[story.id].append({
-            "timestep": story.field.time,
-            "emotional_state": story.emotional_state.description,
-            "embedding": story.emotional_state.embedding.tolist()
-        })
+
+        self.emotional_history[story.id].append(
+            {
+                "timestep": story.field.time,
+                "emotional_state": story.emotional_state.description,
+                "embedding": story.emotional_state.embedding.tolist(),
+            }
+        )
 
     def summarize_journey(self, story: Story):
         journey = self.journey_log.get(story.id, [])
@@ -876,20 +899,32 @@ class EnhancedJourneyLogger(BaseClass):
 
         # Calculate metrics
         total_distance = self.total_distances[story.id]
-        direct_distance = np.linalg.norm(end_state["position"] - start_state["position"])
+        direct_distance = np.linalg.norm(
+            end_state["position"] - start_state["position"]
+        )
         wandering_ratio = total_distance / (direct_distance + 1e-6)
 
         # Perspective analysis
-        significant_shifts = [s for s in story.perspective_shifts if s["magnitude"] > 0.01]
-        avg_shift = np.mean([s["magnitude"] for s in significant_shifts]) if significant_shifts else 0
+        significant_shifts = [
+            s for s in story.perspective_shifts if s["magnitude"] > 0.01
+        ]
+        avg_shift = (
+            np.mean([s["magnitude"] for s in significant_shifts])
+            if significant_shifts
+            else 0
+        )
 
         # Safely get unique interactions
-        unique_interactions = {m["partner_id"] for m in story.memory_layer if "partner_id" in m}
+        unique_interactions = {
+            m["partner_id"] for m in story.memory_layer if "partner_id" in m
+        }
         num_unique_interactions = len(unique_interactions)
 
         # Emotional journey analysis
         emotional_states = self.emotional_history.get(story.id, [])
-        emotional_changes = len(emotional_states) - 1 if len(emotional_states) > 1 else 0
+        emotional_changes = (
+            len(emotional_states) - 1 if len(emotional_states) > 1 else 0
+        )
 
         self.logger.info(
             f"\n=== Journey Summary for {story.id} ===\n"
@@ -929,12 +964,18 @@ class EnhancedJourneyLogger(BaseClass):
 
         return {
             "total_memories": len(story.memory_layer),
-            "unique_interactions": len(set(m.partner_id for m in story.memory_layer if m.partner_id is not None)),
+            "unique_interactions": len(
+                set(
+                    m.partner_id for m in story.memory_layer if m.partner_id is not None
+                )
+            ),
             "theme_exposure": theme_counts,
             "total_perspective_shift": story.total_perspective_shift,
             "most_influential_themes": most_influential_themes,
-            "perspective_shifts": len([s for s in story.perspective_shifts if s["magnitude"] > 0.01]),
-            "emotional_changes": len(self.emotional_history.get(story.id, [])) - 1
+            "perspective_shifts": len(
+                [s for s in story.perspective_shifts if s["magnitude"] > 0.01]
+            ),
+            "emotional_changes": len(self.emotional_history.get(story.id, [])) - 1,
         }
 
 
@@ -1000,7 +1041,7 @@ class DynamicStoryGenerator(BaseClass):
     async def generate_story(self, field: NarrativeField) -> Story:
         themes = await self.theme_generator.generate_themes("Create a new story")
 
-        prompt = f"Write a short positive, neutral, or negative story (5-8 sentences) incorporating the themes: {', '.join(themes)}. Make it interesting and engaging. Make it personal and emotional. Make it unique and memorable, with one clearly defined protagonist. Start the story by introducing the protagonist's name."
+        prompt = f"Write a short positive, neutral, or negative story (2 - 3 sentences) incorporating the themes: {', '.join(themes)}. Make it interesting and engaging. Make it personal and emotional. Name names."
         content = await self.llm.generate(prompt)
 
         # Extract the protagonist's name from the first sentence
@@ -1027,7 +1068,7 @@ class DynamicStoryGenerator(BaseClass):
         )
 
     async def generate_emotional_state(self, content: str) -> EmotionalState:
-        prompt = f"""Given the story: '{content}', describe its positive, neutral, or negative emotional state in 2-3 sentences: """
+        prompt = f"""Given the story: '{content}', describe its positive, neutral, or negative emotional state in 2-3 sentences. How does it feel?: """
         description = await self.llm.generate(prompt)
         embedding = await self.llm.generate_embedding(description)
         return EmotionalState(description, np.array(embedding))
@@ -1098,7 +1139,7 @@ async def simulate_field():
     interaction_engine = EnhancedInteractionEngine(field, llm)
 
     # Generate initial stories
-    for _ in range(1):
+    for _ in range(9):
         story = await story_generator.generate_story(field)
         field.add_story(story)
 
@@ -1219,4 +1260,3 @@ async def simulate_field():
 
 if __name__ == "__main__":
     asyncio.run(simulate_field())
-
