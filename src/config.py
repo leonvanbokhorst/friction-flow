@@ -21,7 +21,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
                 "Mistral-Nemo-Instruct-2407-GGUF/"
                 "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
             ).expanduser(),
-            "model_name": "llama3.2:latest",  # "mistral-nemo:latest",
+            "model_name": "mistral-nemo:latest",
         },
         "embedding": {
             "path": Path(

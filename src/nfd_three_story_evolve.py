@@ -146,19 +146,45 @@ class StoryPerspective:
 
 
 class EmotionalState:
-    def __init__(self, emotions: Dict[str, float] = None):
-        self.emotions = emotions or {"neutral": 0.5}
+    def __init__(self, description: str, embedding: np.ndarray):
+        self.description = description
+        self.embedding = embedding
 
-    def update(self, change: float):
-        # Adjust all emotions based on the change
-        for emotion in self.emotions:
-            self.emotions[emotion] = max(0, min(1, self.emotions[emotion] + change))
+    async def update(
+        self,
+        other: Optional["EmotionalState"] = None,
+        interaction_strength: float = 0.1,
+        llm: Optional[LanguageModel] = None,
+    ):
+        if other is None or llm is None:
+            # Simple update without interaction
+            self.embedding += np.random.normal(
+                0, interaction_strength, self.embedding.shape
+            )
+            return
 
-    def get_dominant_emotions(self, top_n: int = 3) -> List[Tuple[str, float]]:
-        return sorted(self.emotions.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        # Calculate the distance between emotional states
+        distance = np.linalg.norm(self.embedding - other.embedding)
+
+        # Generate a new emotional state description
+        prompt = f"""
+        Current emotional state: {self.description}
+        Interacting emotional state: {other.description}
+        Interaction strength: {interaction_strength}
+        Distance between states: {distance}
+
+        Based on this interaction, describe the new positive, neutral, or negative emotional state in 1 sentence:
+        """
+        new_description = await llm.generate(prompt)
+
+        # Generate a new embedding for the updated emotional state
+        new_embedding = await llm.generate_embedding(new_description)
+
+        self.description = new_description
+        self.embedding = np.array(new_embedding)
 
     def __str__(self):
-        return ", ".join([f"{e}: {v:.2f}" for e, v in self.get_dominant_emotions()])
+        return self.description
 
 
 class Story:
@@ -169,10 +195,11 @@ class Story:
         embedding: np.ndarray,
         perspective_filter: np.ndarray,
         themes: List[str],
-        field: "NarrativeField",  # Add this line
+        field: "NarrativeField",
         position: np.ndarray = None,
         velocity: np.ndarray = None,
-        emotional_state: EmotionalState = field(default_factory=EmotionalState),
+        emotional_state: EmotionalState = None,
+        protagonist_name: str = None,
         **kwargs,
     ):
         self.id = id
@@ -180,51 +207,43 @@ class Story:
         self.embedding = embedding
         self.perspective_filter = perspective_filter
         self.themes = themes
-        self.field = field  # Add this line
+        self.field = field
         self.position = position if position is not None else np.random.randn(3)
         self.velocity = velocity if velocity is not None else np.zeros(3)
         self.emotional_state = emotional_state
-        self.previous_emotional_state = EmotionalState(
-            emotions=self.emotional_state.emotions.copy()
-        )
+        self.previous_emotional_state = None
         self.memory_layer = []
         self.resonance_history = []
         self.total_perspective_shift = 0.0
         self.perspective_shifts = []
+        self.protagonist_name = protagonist_name
 
-        # Initialize position and velocity
-        self.position = position if position is not None else np.random.randn(3)
-        self.velocity = velocity if velocity is not None else np.zeros(3)
         self.logger = logging.getLogger(__name__)
 
-    def update_perspective(
+    def __str__(self):
+        return f"Story {self.id} ({self.protagonist_name}): {self.content[:50]}..."
+
+    async def update_perspective(
         self,
-        other: "Story",
+        other_story: 'Story',
         theme_impact: float,
         resonance: float,
         emotional_change: float,
-        interaction_type: str,
+        interaction_type: str
     ) -> float:
-        base_shift = (
-            theme_impact + resonance + emotional_change
-        ) / 3  # Average instead of product
+        # Calculate perspective shift based on interaction factors
+        shift = theme_impact * resonance * emotional_change * 0.1
 
         # Adjust shift based on interaction type
-        shift_multipliers = {
-            "collaboration": 1.2,
-            "conflict": 0.8,
-            "inspiration": 1.5,
-            "reflection": 1.0,
-        }
-        shift = base_shift * shift_multipliers.get(interaction_type, 1.0)
+        if interaction_type == "conflict":
+            shift *= -1  # Negative shift for conflicting interactions
+        elif interaction_type == "collaboration":
+            shift *= 1.5  # Larger positive shift for collaborative interactions
 
-        # Ensure a minimum shift
-        min_shift = 0.01
-        shift = max(shift, min_shift)
+        # Update perspective filter
+        self.perspective_filter += shift * np.random.randn(len(self.perspective_filter))
 
-        self.perspective_filter += shift * (other.embedding - self.embedding)
-        self.total_perspective_shift += shift
-        return shift
+        return float(shift)  # Ensure we return a float
 
     def _calculate_emotional_influence(self, other: "Story") -> float:
         similarity = self.field._calculate_emotional_similarity(self, other)
@@ -233,25 +252,17 @@ class Story:
         )
         return similarity * intensity * 0.1
 
-    def update_emotional_state(
-        self, other: "Story", interaction_type: str, resonance: float
-    ) -> float:
-        # Simple emotional change calculation
-        base_change = resonance * 0.5  # Scale the change based on resonance
-
-        # Adjust change based on interaction type
-        change_multipliers = {
-            "collaboration": 1.2,
-            "conflict": 0.8,
-            "inspiration": 1.5,
-            "reflection": 1.0,
-        }
-        emotional_change = base_change * change_multipliers.get(interaction_type, 1.0)
-
-        # Update emotional state
-        self.emotional_state.update(emotional_change)
-
-        return emotional_change
+    async def update_emotional_state(
+        self,
+        other: "Story",
+        interaction_type: str,
+        resonance: float,
+        llm: LanguageModel,
+    ):
+        self.previous_emotional_state = EmotionalState(
+            self.emotional_state.description, self.emotional_state.embedding.copy()
+        )
+        await self.emotional_state.update(other.emotional_state, resonance, llm)
 
     def decay_emotions(self, decay_rate=0.01):
         for emotion in vars(self.emotional_state):
@@ -278,12 +289,12 @@ class Story:
         familiarity_bonus = min(0.2, len(interaction_history) * 0.02)
         return base_strength + familiarity_bonus
 
-    def respond_to_environmental_event(self, event: Dict[str, Any]):
+    async def respond_to_environmental_event(self, event: Dict[str, Any]) -> float:
         # Simple response to environmental events
         intensity = event.get("intensity", 0.5)
 
         # Update emotional state based on event intensity
-        self.emotional_state.update(intensity * 0.2)
+        await self.emotional_state.update(interaction_strength=intensity * 0.2)
 
         # Add a memory of the event
         memory = {
@@ -294,14 +305,16 @@ class Story:
         }
         self.memory_layer.append(memory)
 
-    def update_state(self, avg_resonance: float, avg_shift: float):
+        return intensity
+
+    async def update_state(self, avg_resonance: float, avg_shift: float) -> float:
         # Update the story's state based on recent interactions
-        self.emotional_state.update(
-            avg_resonance * 0.1
-        )  # Small emotional update based on average resonance
-        self.perspective_filter += (
-            avg_shift * 0.1
-        )  # Small perspective update based on average shift
+        await self.emotional_state.update(
+            interaction_strength=avg_resonance * 0.1
+        )
+        shift = avg_shift * 0.1
+        self.perspective_filter += shift  # Small perspective update based on average shift
+        return shift
 
 
 class NarrativeFieldViz:
@@ -392,19 +405,13 @@ class NarrativeField:
         )
 
     def _calculate_emotional_similarity(self, story1: Story, story2: Story) -> float:
-        emotions1 = set(story1.emotional_state.emotions.keys())
-        emotions2 = set(story2.emotional_state.emotions.keys())
-        shared_emotions = emotions1 & emotions2
-
-        if not shared_emotions:
-            return 0.0
-
-        similarity = sum(
-            min(story1.emotional_state.emotions[e], story2.emotional_state.emotions[e])
-            for e in shared_emotions
-        ) / len(shared_emotions)
-
-        return similarity
+        # Calculate cosine similarity between emotional state embeddings
+        similarity = F.cosine_similarity(
+            torch.tensor(story1.emotional_state.embedding),
+            torch.tensor(story2.emotional_state.embedding),
+            dim=0,
+        )
+        return float(similarity)
 
     def add_story(self, story: Story):
         """Add a new story to the field"""
@@ -422,9 +429,11 @@ class NarrativeField:
                 -np.linalg.norm(story.position) / 10.0
             )
 
-    def apply_environmental_event(self, event_type, intensity):
+    async def apply_environmental_event(self, event: Dict[str, Any]):
+        """Apply an environmental event to all stories in the field"""
         for story in self.stories:
-            story.respond_to_environmental_event(event_type, intensity)
+            await story.respond_to_environmental_event(event)
+        self.field_memory.append(event)
 
 
 class StoryPhysics:
@@ -499,19 +508,25 @@ class EnhancedCollectiveStoryEngine:
         self.story_states: Dict[str, StoryState] = {}
         self.logger = logging.getLogger(__name__)
 
-    def update_story_states(self):
+    async def update_story_states(self):
         for story in self.field.stories:
             recent_memories = story.memory_layer[-5:]  # Get the 5 most recent memories
             if recent_memories:
                 avg_resonance = np.mean(
                     [m.get("resonance", 0) for m in recent_memories]
                 )
-                avg_shift = np.mean(
-                    [m.get("perspective_shift", 0) for m in recent_memories]
-                )
+                perspective_shifts = []
+                for m in recent_memories:
+                    shift = m.get("perspective_shift", 0)
+                    if asyncio.iscoroutine(shift):
+                        shift = await shift
+                    perspective_shifts.append(shift)
+                
+                avg_shift = np.mean(perspective_shifts)
 
                 # Update story state based on recent interactions
-                story.update_state(avg_resonance, avg_shift)
+                shift = await story.update_state(avg_resonance, avg_shift)
+                story.total_perspective_shift += shift
 
     def detect_emergent_themes(self) -> List[str]:
         """Detect themes that are becoming more prominent"""
@@ -559,46 +574,41 @@ class ThemeEvolutionEngine:
         self.theme_resonance = {}  # Track theme relationships
         self.logger = logging.getLogger(__name__)
 
-    def process_interaction(self, story1: Story, story2: Story, resonance: float):
-        """Process theme interactions and evolution"""
-        # Find theme relationships
-        direct_shared = set(story1.themes) & set(story2.themes)
-        story1_themes = set(story1.themes)
-        story2_themes = set(story2.themes)
+class EnhancedInteractionEngine:
+    # ... (other methods remain the same)
 
-        # Theme relationship analysis
-        relationships = {
-            ("hope", "journey"): 0.7,
-            ("loneliness", "discovery"): 0.6,
-            ("guidance", "nature"): 0.5,
-            ("duty", "freedom"): 0.4,
-            ("imagination", "guidance"): 0.6,
-            ("subconscious", "discovery"): 0.5,
-        }
+    async def process_interaction(self, story1: Story, story2: Story):
+        if story1.id == story2.id:
+            return  # Prevent a story from interacting with itself
 
-        # Find indirect theme relationships
-        indirect_resonance = 0.0
-        for t1 in story1_themes:
-            for t2 in story2_themes:
-                if (t1, t2) in relationships:
-                    indirect_resonance += relationships[(t1, t2)]
-                elif (t2, t1) in relationships:
-                    indirect_resonance += relationships[(t2, t1)]
+        interaction_type = await self.determine_interaction_type(story1, story2)
+        resonance = self.field.detect_resonance(story1, story2)
 
-        # Calculate thematic impact
-        theme_impact = len(direct_shared) * 0.3 + indirect_resonance * 0.2
+        if resonance > self.field.resonance_threshold:
+            theme_impact = self.calculate_theme_impact(story1, story2)
+            emotional_change = self._calculate_emotional_influence(story1, story2)
 
-        return {
-            "direct_shared": direct_shared,
-            "indirect_resonance": indirect_resonance,
-            "theme_impact": theme_impact,
-            "related_themes": [
-                (t1, t2)
-                for t1 in story1_themes
-                for t2 in story2_themes
-                if (t1, t2) in relationships or (t2, t1) in relationships
-            ],
-        }
+            perspective_shift = await story1.update_perspective(
+                story2, theme_impact, resonance, emotional_change, interaction_type
+            )
+
+            await story1.update_emotional_state(story2, interaction_type, resonance, self.llm)
+
+            # Add memory of interaction
+            memory = {
+                "type": "interaction",
+                "partner_id": story2.id,
+                "resonance": resonance,
+                "interaction_type": interaction_type,
+                "perspective_shift": perspective_shift,
+                "timestamp": self.field.time,
+            }
+            story1.memory_layer.append(memory)
+
+            return resonance, interaction_type
+        return 0, None
+
+    # ... (rest of the class remains the same)
 
 
 class StoryInteractionEngine:
@@ -623,10 +633,10 @@ class EnhancedInteractionEngine(StoryInteractionEngine):
     async def determine_interaction_type(self, story1: Story, story2: Story) -> str:
         prompt = f"""
         Story 1 Themes: {', '.join(story1.themes)}
-        Story 1 Emotional State: {vars(story1.emotional_state)}
+        Story 1 Emotional State: {story1.emotional_state}
         
         Story 2 Themes: {', '.join(story2.themes)}
-        Story 2 Emotional State: {vars(story2.emotional_state)}
+        Story 2 Emotional State: {story2.emotional_state}
         
         Based on the themes and emotional states of these two stories, what type of interaction might occur between them?
         Choose from: collaboration, conflict, inspiration, reflection, transformation, challenge, or synthesis.
@@ -636,54 +646,44 @@ class EnhancedInteractionEngine(StoryInteractionEngine):
         return await self.llm.generate(prompt)
 
     async def process_interaction(self, story1: Story, story2: Story):
+        if story1.id == story2.id:
+            return  # Prevent a story from interacting with itself
+
         interaction_type = await self.determine_interaction_type(story1, story2)
         resonance = self.field.detect_resonance(story1, story2)
 
         if resonance > self.field.resonance_threshold:
-            # Calculate theme impact and emotional change
             theme_impact = self.calculate_theme_impact(story1, story2)
-            emotional_change1 = story1.update_emotional_state(
-                story2, interaction_type, resonance
-            )
-            emotional_change2 = story2.update_emotional_state(
-                story1, interaction_type, resonance
+            emotional_change = self._calculate_emotional_influence(story1, story2)
+
+            perspective_shift = await story1.update_perspective(
+                story2, theme_impact, resonance, emotional_change, interaction_type
             )
 
-            # Update perspectives
-            shift1 = story1.update_perspective(
-                story2, theme_impact, resonance, emotional_change1, interaction_type
-            )
-            shift2 = story2.update_perspective(
-                story1, theme_impact, resonance, emotional_change2, interaction_type
-            )
+            await story1.update_emotional_state(story2, interaction_type, resonance, self.llm)
 
-            # Create memories for both stories
-            self.create_memory(story1, story2, resonance, shift1, interaction_type)
-            self.create_memory(story2, story1, resonance, shift2, interaction_type)
+            # Add memory of interaction
+            memory = {
+                "type": "interaction",
+                "partner_id": story2.id,
+                "resonance": resonance,
+                "interaction_type": interaction_type,
+                "perspective_shift": perspective_shift,  # This is now awaited
+                "timestamp": self.field.time,
+            }
+            story1.memory_layer.append(memory)
 
             return resonance, interaction_type
-        return 0, "no_interaction"
+        return 0, None
 
     def calculate_theme_impact(self, story1: Story, story2: Story) -> float:
         shared_themes = set(story1.themes) & set(story2.themes)
         return len(shared_themes) / max(len(story1.themes), len(story2.themes))
 
-    def create_memory(
-        self,
-        story: Story,
-        other: Story,
-        resonance: float,
-        shift: float,
-        interaction_type: str,
-    ):
-        memory = {
-            "interacted_with": other.id,
-            "resonance": resonance,
-            "perspective_shift": shift,
-            "interaction_type": interaction_type,
-            "timestamp": self.field.time,
-        }
-        story.memory_layer.append(memory)
+    def _calculate_emotional_influence(self, story1: Story, story2: Story) -> float:
+        # Implement the emotional influence calculation here
+        # This is a placeholder implementation
+        return 0.5  # Return a value between 0 and 1
 
 
 class StoryPhysics:
@@ -834,39 +834,27 @@ class StoryJourneyLogger:
         self.journey_log = {}
         self.total_distances = {}  # Track cumulative distance for each story
         self.significant_events = []  # Track important moments
-        self.logger = logging.getLogger(__name__)
 
-    def log_interaction(self, story1: Story, story2: Story, resonance: float):
+    def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
         latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
+        perspective_shift = latest_memory.get('perspective_shift', 0)
+        
+        # If perspective_shift is a coroutine, we need to run it in an event loop
+        if asyncio.iscoroutine(perspective_shift):
+            perspective_shift = asyncio.get_event_loop().run_until_complete(perspective_shift)
 
-        self.logger.info(
-            f"\nSignificant Interaction:\n"
-            f"  {story1.id} <-> {story2.id}\n"
+        log_entry = (
+            f"Interaction between {story1.id} and {story2.id}:\n"
             f"  Resonance: {resonance:.2f}\n"
+            f"  Interaction Type: {interaction_type}\n"
+            f"  Perspective Shift: {perspective_shift:.4f}\n"
             f"  Shared Themes: {set(story1.themes) & set(story2.themes)}\n"
             f"  Distance: {np.linalg.norm(story1.position - story2.position):.2f}\n"
             f"  Positions:\n"
             f"    {story1.id}: {story1.position}\n"
             f"    {story2.id}: {story2.position}\n"
         )
-
-        if latest_memory:
-            self.logger.info(
-                f"\nInteraction Details:\n"
-                f"  Interaction Type: {latest_memory.get('interaction_type', 'Unknown')}\n"
-                f"  Perspective Shift: {latest_memory.get('perspective_shift', 0):.4f}\n"
-            )
-
-        self.logger.info(
-            f"\nEmotional Impact:\n"
-            f"  {story1.id} Emotional State: {story1.emotional_state}\n"
-            f"  {story2.id} Emotional State: {story2.emotional_state}\n"
-        )
-
-    def _format_emotional_change(self, story: Story) -> str:
-        return ", ".join(
-            [f"{e}: {v:.2f}" for e, v in story.emotional_state.get_dominant_emotions()]
-        )
+        self.logger.info(log_entry)
 
     def log_story_state(self, story: Story, timestep: float):
         """Log detailed story state and track journey metrics"""
@@ -888,8 +876,7 @@ class StoryJourneyLogger:
                         "time": timestep,
                         "story_id": story.id,
                         "distance": movement,
-                        "direction": story.velocity
-                        / (np.linalg.norm(story.velocity) + 1e-6),
+                        "direction": story.velocity / (np.linalg.norm(story.velocity) + 1e-6),
                     }
                 )
 
@@ -915,20 +902,16 @@ class StoryJourneyLogger:
 
         # Calculate metrics
         total_distance = self.total_distances[story.id]
-        direct_distance = np.linalg.norm(
-            end_state["position"] - start_state["position"]
-        )
+        direct_distance = np.linalg.norm(end_state["position"] - start_state["position"])
         wandering_ratio = total_distance / (direct_distance + 1e-6)
 
         # Perspective analysis
-        significant_shifts = [
-            s for s in story.perspective_shifts if s["magnitude"] > 0.01
-        ]
-        avg_shift = (
-            np.mean([s["magnitude"] for s in significant_shifts])
-            if significant_shifts
-            else 0
-        )
+        significant_shifts = [s for s in story.perspective_shifts if s["magnitude"] > 0.01]
+        avg_shift = np.mean([s["magnitude"] for s in significant_shifts]) if significant_shifts else 0
+
+        # Safely get unique interactions
+        unique_interactions = set(m["interacted_with"] for m in story.memory_layer if "interacted_with" in m)
+        num_unique_interactions = len(unique_interactions)
 
         self.logger.info(
             f"\n=== Journey Summary for {story.id} ===\n"
@@ -938,7 +921,7 @@ class StoryJourneyLogger:
             f"  Wandering Ratio: {wandering_ratio:.2f}\n"
             f"\nInteraction Metrics:\n"
             f"  Memories Formed: {len(story.memory_layer)}\n"
-            f"  Unique Interactions: {len(set(m['interacted_with'] for m in story.memory_layer))}\n"
+            f"  Unique Interactions: {num_unique_interactions}\n"
             f"  Total Perspective Shift: {story.total_perspective_shift:.4f}\n"
             f"  Average Shift Magnitude: {avg_shift:.4f}\n"
             f"  Significant Perspective Changes: {len(significant_shifts)}\n"
@@ -948,228 +931,27 @@ class StoryJourneyLogger:
             f"\nSignificant Events: {len(story.memory_layer)}"
         )
 
-
-async def create_story_cluster():
-    """Create initial story positions in a balanced configuration"""
-    # Position stories in a triangle with some random offset
-    base_positions = np.array(
-        [[1.0, 0.0, 0.0], [-0.5, 0.866, 0.0], [-0.5, -0.866, 0.0]]
-    )
-
-    # Add random offset to make it interesting
-    return base_positions + np.random.randn(3, 3) * 0.2
-
-
-def summarize_story_journey(story: Story):
-    """Enhanced journey summary with perspective analysis"""
-    theme_counts = {}
-    for memory in story.memory_layer:
-        for theme in memory["themes"]:
-            theme_counts[theme] = theme_counts.get(theme, 0) + 1
-
-    most_influential_themes = sorted(
-        story.perspective.theme_influences.items(), key=lambda x: x[1], reverse=True
-    )[:3]
-
-    total_perspective_shift = story.perspective.total_shift
-
-    return {
-        "total_memories": len(story.memory_layer),
-        "unique_interactions": len(
-            set(m["interacted_with"] for m in story.memory_layer)
-        ),
-        "theme_exposure": theme_counts,
-        "total_perspective_shift": total_perspective_shift,
-        "most_influential_themes": most_influential_themes,
-        "perspective_shifts": len(
-            [s for s in story.perspective.shift_history if s["magnitude"] > 0.01]
-        ),
-    }
-
-
-class DynamicThemeGenerator:
-    def __init__(self, llm: LanguageModel):
-        self.llm = llm
-        self.theme_cache = set()
-        self.logger = logging.getLogger(__name__)
-
-    async def generate_themes(self, context: str, num_themes: int = 3) -> List[str]:
-        prompt = f"""Given the context '{context}', generate {num_themes} unique, single-word themes that could be present in a story. Output ONLY a valid JSON array of strings, nothing else. Example:
-        ["hope", "journey", "transformation"]
-        """
-        response = await self.llm.generate(prompt)
-
-        try:
-            # Extract JSON array from the response
-            json_match = re.search(r"\[.*\]", response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                new_themes = json.loads(json_str)
-            else:
-                raise ValueError("No JSON array found in response")
-
-            # Ensure we have the correct number of themes
-            new_themes = [theme.lower() for theme in new_themes[:num_themes]]
-            while len(new_themes) < num_themes:
-                new_themes.append(f"theme_{len(new_themes) + 1}")
-
-            self.theme_cache.update(new_themes)
-            return new_themes
-        except json.JSONDecodeError:
-            self.logger.error(f"Failed to parse themes JSON: {response}")
-            return [f"theme_{i+1}" for i in range(num_themes)]
-        except Exception as e:
-            self.logger.error(f"Error generating themes: {e}")
-            return [f"theme_{i+1}" for i in range(num_themes)]
-
-    def get_random_themes(self, num_themes: int = 3) -> List[str]:
-        return random.sample(
-            list(self.theme_cache), min(num_themes, len(self.theme_cache))
-        )
-
-
-class DynamicStoryGenerator:
-    def __init__(self, llm: LanguageModel, theme_generator: DynamicThemeGenerator):
-        self.llm = llm
-        self.theme_generator = theme_generator
-        self.logger = logging.getLogger(__name__)
-
-    async def generate_story(self, field: NarrativeField) -> Story:
-        themes = await self.theme_generator.generate_themes("Create a new story")
-
-        prompt = f"Write a short story (2-3 sentences) incorporating the themes: {', '.join(themes)}."
-        content = await self.llm.generate(prompt)
-
-        embedding = await self.llm.generate_embedding(content)
-
-        emotional_state = await self.generate_emotional_state(content)
-
-        return Story(
-            id=f"story_{len(field.stories)}",
-            content=content,
-            embedding=np.array(embedding),
-            perspective_filter=np.ones(len(embedding)),
-            position=np.random.randn(3),
-            velocity=np.zeros(3),
-            themes=themes,
-            emotional_state=emotional_state,
-            field=field,
-        )
-
-    async def generate_emotional_state(self, content: str) -> EmotionalState:
-        prompt = f"""Given the story: '{content}', provide 3-5 emotions that best describe the overall mood or atmosphere. For each emotion, assign a numerical value (0.0 to 1.0) indicating its intensity. Output ONLY a valid JSON object, nothing else. Example:
-        {{
-            "curiosity": 0.8,
-            "melancholy": 0.5,
-            "hope": 0.3
-        }}
-        """
-        response = await self.llm.generate(prompt)
-
-        # Extract JSON object from the response and ensure it's properly closed
-        json_match = re.search(r"\{[^{]*", response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            # Add closing brace if missing
-            if not json_str.strip().endswith("}"):
-                json_str += "}"
-            try:
-                emotions = json.loads(json_str)
-            except json.JSONDecodeError:
-                self.logger.error(f"Failed to parse extracted JSON: {json_str}")
-                emotions = {"neutral": 0.5}  # Fallback to a default emotion
-        else:
-            self.logger.error(f"No JSON object found in response: {response}")
-            emotions = {"neutral": 0.5}  # Fallback to a default emotion
-
-        # Ensure all values are floats between 0 and 1
-        emotions = {k: min(max(float(v), 0.0), 1.0) for k, v in emotions.items()}
-
-        return EmotionalState(emotions=emotions)
-
-
-class EnvironmentalEventGenerator:
-    def __init__(self, llm: LanguageModel):
-        self.llm = llm
-        self.logger = logging.getLogger(__name__)
-
-    async def generate_event(self) -> Dict[str, Any]:
-        prompt = "Generate a random environmental event for a narrative field. Include an event name, description, and intensity (0.0 to 1.0)."
-        response = await self.llm.generate(prompt)
-
-        event_data = {
-            "name": "Unknown Event",
-            "description": "An unexpected event occurred.",
-            "intensity": 0.5,
-        }
-
-        for line in response.split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                key = key.strip().lower()
-                value = value.strip()
-                if key in ["name", "description"]:
-                    event_data[key] = value
-                elif key == "intensity":
-                    try:
-                        event_data[key] = float(value)
-                    except ValueError:
-                        self.logger.warning(
-                            f"Invalid intensity value: {value}. Using default."
-                        )
-
-        return event_data
-
-    async def apply_event(self, field: NarrativeField):
-        try:
-            event = await self.generate_event()
-            self.logger.info(
-                f"Environmental Event: {event['name']} (Intensity: {event['intensity']})"
-            )
-            self.logger.info(f"Description: {event['description']}")
-
-            for story in field.stories:
-                story.respond_to_environmental_event(event)
-        except Exception as e:
-            self.logger.error(f"Failed to generate or apply environmental event: {e}")
-
-
-class StoryJourneyLogger:
-    """Tracks and logs the journey of stories through the narrative field"""
-
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.journey_log = {}
-        self.total_distances = {}  # Track cumulative distance for each story
-        self.significant_events = []  # Track important moments
-        self.logger = logging.getLogger(__name__)
-
-    def log_interaction(self, story1: Story, story2: Story, resonance: float):
+class JourneyLogger:
+    def log_interaction(self, story1: Story, story2: Story, resonance: float, interaction_type: str):
         latest_memory = story1.memory_layer[-1] if story1.memory_layer else {}
+        perspective_shift = latest_memory.get('perspective_shift', 0)
+        
+        # If perspective_shift is a coroutine, we need to run it in an event loop
+        if asyncio.iscoroutine(perspective_shift):
+            perspective_shift = asyncio.get_event_loop().run_until_complete(perspective_shift)
 
-        self.logger.info(
-            f"\nSignificant Interaction:\n"
-            f"  {story1.id} <-> {story2.id}\n"
+        log_entry = (
+            f"Interaction between {story1.id} and {story2.id}:\n"
             f"  Resonance: {resonance:.2f}\n"
+            f"  Interaction Type: {interaction_type}\n"
+            f"  Perspective Shift: {perspective_shift:.4f}\n"
             f"  Shared Themes: {set(story1.themes) & set(story2.themes)}\n"
             f"  Distance: {np.linalg.norm(story1.position - story2.position):.2f}\n"
             f"  Positions:\n"
             f"    {story1.id}: {story1.position}\n"
             f"    {story2.id}: {story2.position}\n"
         )
-
-        if latest_memory:
-            self.logger.info(
-                f"\nInteraction Details:\n"
-                f"  Interaction Type: {latest_memory.get('interaction_type', 'Unknown')}\n"
-                f"  Perspective Shift: {latest_memory.get('perspective_shift', 0):.4f}\n"
-            )
-
-        self.logger.info(
-            f"\nEmotional Impact:\n"
-            f"  {story1.id} Emotional State: {story1.emotional_state}\n"
-            f"  {story2.id} Emotional State: {story2.emotional_state}\n"
-        )
+        self.logger.info(log_entry)
 
     def _format_emotional_change(self, story: Story) -> str:
         return ", ".join(
@@ -1312,6 +1094,7 @@ class DynamicThemeGenerator:
         ["hope", "journey", "transformation"]
         """
         response = await self.llm.generate(prompt)
+        response = response.strip().lower()
 
         try:
             # Extract JSON array from the response
@@ -1351,8 +1134,12 @@ class DynamicStoryGenerator:
     async def generate_story(self, field: NarrativeField) -> Story:
         themes = await self.theme_generator.generate_themes("Create a new story")
 
-        prompt = f"Write a short story (2-3 sentences) incorporating the themes: {', '.join(themes)}."
+        prompt = f"Write a short positive, neutral, or negative story (5-8 sentences) incorporating the themes: {', '.join(themes)}. Make it interesting and engaging. Make it personal and emotional. Make it unique and memorable, with one clearly defined protagonist. Start the story by introducing the protagonist's name."
         content = await self.llm.generate(prompt)
+
+        # Extract the protagonist's name from the first sentence
+        first_sentence = content.split('.')[0]
+        protagonist_name = first_sentence.split()[0]  # Assume the first word is the name
 
         embedding = await self.llm.generate_embedding(content)
 
@@ -1368,39 +1155,14 @@ class DynamicStoryGenerator:
             themes=themes,
             emotional_state=emotional_state,
             field=field,
+            protagonist_name=protagonist_name
         )
 
     async def generate_emotional_state(self, content: str) -> EmotionalState:
-        prompt = f"""Given the story: '{content}', provide 3-5 emotions that best describe the overall mood or atmosphere. For each emotion, assign a numerical value (0.0 to 1.0) indicating its intensity. Output ONLY a valid JSON object, nothing else. Example:
-        {{
-            "curiosity": 0.8,
-            "melancholy": 0.5,
-            "hope": 0.3
-        }}
-        """
-        response = await self.llm.generate(prompt)
-        response = response.strip().lower()
-
-        # Extract JSON object from the response and ensure it's properly closed
-        json_match = re.search(r"\{[^{]*", response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            # Add closing brace if missing
-            if not json_str.strip().endswith("}"):
-                json_str += "}"
-            try:
-                emotions = json.loads(json_str)
-            except json.JSONDecodeError:
-                self.logger.error(f"Failed to parse extracted JSON: {json_str}")
-                emotions = {"neutral": 0.5}  # Fallback to a default emotion
-        else:
-            self.logger.error(f"No JSON object found in response: {response}")
-            emotions = {"neutral": 0.5}  # Fallback to a default emotion
-
-        # Ensure all values are floats between 0 and 1
-        emotions = {k: min(max(float(v), 0.0), 1.0) for k, v in emotions.items()}
-
-        return EmotionalState(emotions=emotions)
+        prompt = f"""Given the story: '{content}', describe its positive, neutral, or negative emotional state in 2-3 sentences: """
+        description = await self.llm.generate(prompt)
+        embedding = await self.llm.generate_embedding(description)
+        return EmotionalState(description, np.array(embedding))
 
 
 class EnvironmentalEventGenerator:
@@ -1409,7 +1171,7 @@ class EnvironmentalEventGenerator:
         self.logger = logging.getLogger(__name__)
 
     async def generate_event(self) -> Dict[str, Any]:
-        prompt = "Generate a random environmental event for a narrative field. Include an event name, description, and intensity (0.0 to 1.0)."
+        prompt = "Generate a random positive or negative environmental event for a narrative field. Include an event name, description, and intensity (0.0 to 1.0)."
         response = await self.llm.generate(prompt)
 
         event_data = {
@@ -1452,13 +1214,7 @@ class EnvironmentalEventGenerator:
 async def simulate_field():
     """Run a simulation of the narrative field"""
     # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
     logger = logging.getLogger(__name__)
-
-    logger.info("Starting narrative field simulation")
 
     # Initialize language model
     llm = OllamaInterface()
@@ -1496,21 +1252,44 @@ async def simulate_field():
             field.add_story(new_story)
             logger.info(f"New story added: {new_story.id}")
 
-        # Occasionally generate environmental events
-        if t % 40 == 0:
-            await event_generator.apply_event(field)
+        # Generate and apply environmental events
+        if random.random() < 0.025:  # Assuming environmental_event_probability is 0.025
+            event = await event_generator.generate_event()
+            try:
+                await field.apply_environmental_event(event)
+                logger.info(
+                    f"Environmental Event: {event['name']} (Intensity: {event['intensity']})"
+                )
+                logger.info(f"Description: {event['description']}")
+            except Exception as e:
+                logger.error(
+                    f"Failed to generate or apply environmental event: {str(e)}"
+                )
 
-        # Check for interactions with enhanced engine
+        # Check for interactions
         for i, story1 in enumerate(field.stories):
-            for story2 in field.stories[i + 1 :]:
-                if (
-                    np.linalg.norm(story1.position - story2.position)
-                    < field.interaction_range
-                ):
-                    await interaction_engine.process_interaction(story1, story2)
+            for story2 in field.stories[i + 1:]:
+                distance = np.linalg.norm(story1.position - story2.position)
+                if distance < field.interaction_range:
+                    resonance, interaction_type = await interaction_engine.process_interaction(story1, story2)
+                    if resonance > 0:
+                        logger.info(f"\nSignificant Interaction:")
+                        logger.info(f"  {story1.id} <-> {story2.id}")
+                        logger.info(f"  Resonance: {resonance:.2f}")
+                        logger.info(f"  Shared Themes: {set(story1.themes) & set(story2.themes)}")
+                        logger.info(f"  Distance: {distance:.2f}")
+                        logger.info(f"  Positions:")
+                        logger.info(f"    {story1.id}: {story1.position}")
+                        logger.info(f"    {story2.id}: {story2.position}")
+                        logger.info(f"\nInteraction Details:")
+                        logger.info(f"  Interaction Type: {interaction_type}")
+                        logger.info(f"  Perspective Shift: {story1.total_perspective_shift:.4f}")
+                        logger.info(f"\nEmotional Impact:")
+                        logger.info(f"  {story1.id} Emotional State: {story1.emotional_state}")
+                        logger.info(f"  {story2.id} Emotional State: {story2.emotional_state}")
 
         # Update story states
-        collective_engine.update_story_states()
+        await collective_engine.update_story_states()
 
         # Capture visualization data
         await visualizer.capture_state(field, t)
@@ -1533,9 +1312,9 @@ async def simulate_field():
             for story2 in field.stories[i + 1 :]:
                 distance = np.linalg.norm(story1.position - story2.position)
                 if distance < field.interaction_range:
-                    await interaction_engine.process_interaction(story1, story2)
+                    resonance, interaction_type = await interaction_engine.process_interaction(story1, story2)
                     journey_logger.log_interaction(
-                        story1, story2, field.detect_resonance(story1, story2)
+                        story1, story2, resonance, interaction_type
                     )
 
     # Print final summaries
@@ -1551,3 +1330,4 @@ async def simulate_field():
 
 if __name__ == "__main__":
     asyncio.run(simulate_field())
+
