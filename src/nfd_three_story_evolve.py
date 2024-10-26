@@ -200,11 +200,11 @@ class Story(BaseClass):
         embedding: np.ndarray,
         perspective_filter: np.ndarray,
         themes: List[str],
-        field: "NarrativeField",
         position: np.ndarray = None,
         velocity: np.ndarray = None,
         emotional_state: EmotionalState = None,
         protagonist_name: str = None,
+        field: Optional["NarrativeField"] = None,
         **kwargs,
     ):
         super().__init__()
@@ -213,7 +213,6 @@ class Story(BaseClass):
         self.embedding = embedding
         self.perspective_filter = perspective_filter
         self.themes = themes
-        self.field = field
         self.position = position if position is not None else np.random.randn(3)
         self.velocity = velocity if velocity is not None else np.zeros(3)
         self.emotional_state = emotional_state
@@ -223,6 +222,16 @@ class Story(BaseClass):
         self.total_perspective_shift = 0.0
         self.perspective_shifts = []
         self.protagonist_name = protagonist_name
+        self._field = None
+        if field:
+            self.set_field(field)
+
+    def set_field(self, field: "NarrativeField"):
+        self._field = field
+
+    @property
+    def field(self) -> Optional["NarrativeField"]:
+        return self._field
 
     def __str__(self):
         return f"Story {self.id} ({self.protagonist_name}): {self.content[:50]}..."
@@ -419,7 +428,7 @@ class NarrativeField(BaseClass):
 
     def add_story(self, story: Story):
         """Add a new story to the field"""
-        story.field = self  # Add this line
+        story.set_field(self)
         self.stories.append(story)
         self._update_field_potential()
         self.logger.info(f"Added new story: {story.id}")
@@ -1161,3 +1170,4 @@ async def simulate_field():
 
 if __name__ == "__main__":
     asyncio.run(simulate_field())
+
