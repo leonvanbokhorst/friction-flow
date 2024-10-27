@@ -2,9 +2,10 @@ import numpy as np
 from dataclasses import dataclass, field
 import torch
 import torch.autograd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 from transformers import AutoTokenizer, AutoModel
 import logging
+import torch.nn.functional as F
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -109,6 +110,59 @@ class PatternMemory:
         return torch.nn.functional.normalize(modulated, dim=0)
 
 
+class PatternEvolution:
+    def __init__(self):
+        self.pattern_trajectories: Dict[int, List[Dict]] = {}
+        self.next_pattern_id = 0
+    
+    def update(self, current_patterns: List[Dict], field_state: torch.Tensor):
+        new_trajectories = {}
+        
+        for pattern in current_patterns:
+            best_match = None
+            best_match_score = 0.8  # Minimum similarity threshold
+            
+            for pattern_id, trajectory in self.pattern_trajectories.items():
+                if trajectory[-1]["active"]:  # Only consider active trajectories
+                    similarity = self.calculate_pattern_similarity(
+                        pattern, trajectory[-1]["pattern"]
+                    )
+                    if similarity > best_match_score:
+                        best_match = pattern_id
+                        best_match_score = similarity
+            
+            if best_match is not None:
+                # Continue existing trajectory
+                self.pattern_trajectories[best_match].append({
+                    "pattern": pattern,
+                    "time": len(self.pattern_trajectories[best_match]),
+                    "field_state": field_state,
+                    "active": True
+                })
+                new_trajectories[best_match] = True
+            else:
+                # Start new trajectory
+                self.pattern_trajectories[self.next_pattern_id] = [{
+                    "pattern": pattern,
+                    "time": 0,
+                    "field_state": field_state,
+                    "active": True
+                }]
+                new_trajectories[self.next_pattern_id] = True
+                self.next_pattern_id += 1
+        
+        # Mark unmatched trajectories as inactive
+        for pattern_id in self.pattern_trajectories:
+            if pattern_id not in new_trajectories:
+                self.pattern_trajectories[pattern_id][-1]["active"] = False
+
+    def calculate_pattern_similarity(self, pattern1: Dict, pattern2: Dict) -> float:
+        # Implement similarity calculation between patterns
+        # This is a placeholder implementation
+        return F.cosine_similarity(pattern1["center"].unsqueeze(0), 
+                                   pattern2["center"].unsqueeze(0)).item()
+
+
 class NarrativeFieldSimulator:
     def __init__(self):
         # Initialize quantum semantic space
@@ -120,6 +174,7 @@ class NarrativeFieldSimulator:
         self.total_energy = 1.0  # System's total energy
         self.energy_threshold = 2.0  # Maximum allowed energy
         self.pattern_memory = PatternMemory(self.stories)
+        self.pattern_evolution = PatternEvolution()
 
     def create_wave_function(self, content: str, story_id: str) -> NarrativeWave:
         """Convert story to quantum wave function and add to stories dict"""
@@ -141,19 +196,34 @@ class NarrativeFieldSimulator:
         return wave
 
     def quantum_interference(self, wave1: NarrativeWave, wave2: NarrativeWave) -> float:
-        """Enhanced quantum interference with uncertainty"""
+        """More sophisticated quantum interference calculation"""
+        similarity = torch.cosine_similarity(wave1.embedding.unsqueeze(0), 
+                                           wave2.embedding.unsqueeze(0))
+        phase_factor = torch.cos(wave1.phase - wave2.phase)
+        
+        coherence_coupling = wave1.coherence * wave2.coherence
+        
         position_uncertainty = torch.std(wave1.embedding)
         momentum_uncertainty = torch.std(wave2.embedding)
         uncertainty_factor = 1.0 / (position_uncertainty * momentum_uncertainty)
         
         semantic_distance = torch.norm(wave1.embedding - wave2.embedding)
-        tunnel_probability = torch.exp(-semantic_distance)
+        barrier_height = 1.0 / (wave1.amplitude * wave2.amplitude)
+        tunnel_probability = torch.exp(-semantic_distance * barrier_height)
         
-        similarity = torch.cosine_similarity(wave1.embedding.unsqueeze(0), 
-                                           wave2.embedding.unsqueeze(0))
-        phase_factor = torch.cos(wave1.phase - wave2.phase)
+        entanglement_strength = torch.tensor(
+            sum(set(wave1.entanglement.values()) & 
+                set(wave2.entanglement.values()))
+        )
         
-        return float(similarity * phase_factor * uncertainty_factor * tunnel_probability)
+        return float(
+            similarity * 
+            phase_factor * 
+            coherence_coupling * 
+            uncertainty_factor * 
+            tunnel_probability * 
+            (1 + entanglement_strength)
+        )
 
     def apply_field_effects(self, wave: NarrativeWave, dt: float):
         """Apply quantum field effects to a narrative wave"""
@@ -220,13 +290,10 @@ class NarrativeFieldSimulator:
         self.field_state = self.field_state / torch.norm(self.field_state)
 
     def detect_emergence(self) -> List[Dict]:
-        """Detect emergent patterns in the narrative field"""
-        logger.debug(f"Detecting emergence with {len(self.stories)} stories")
+        """Enhanced pattern detection with better uniqueness handling"""
         patterns = []
-        if len(self.stories) < 3:
-            logger.debug("Not enough stories for meaningful patterns")
-            return patterns
-
+        processed_pairs: Set[Tuple[int, int]] = set()
+        
         story_keys = list(self.stories.keys())
         embeddings = torch.stack([self.stories[key].embedding for key in story_keys])
         
@@ -235,45 +302,40 @@ class NarrativeFieldSimulator:
         )
 
         threshold = 0.8
-        processed_stories = set()
-
+        
         for i in range(len(similarity_matrix)):
-            if story_keys[i] in processed_stories:
-                continue
+            for j in range(i + 1, len(similarity_matrix)):
+                if (i, j) in processed_pairs:
+                    continue
+                    
+                similarity = similarity_matrix[i, j]
+                if similarity > threshold:
+                    center = (embeddings[i] + embeddings[j]) / 2
+                    radius = torch.norm(embeddings[i] - embeddings[j])
+                    
+                    distances = torch.norm(embeddings - center.unsqueeze(0), dim=1)
+                    members = (distances <= radius * 1.2).nonzero().squeeze(1)
+                    
+                    if len(members) >= 2:
+                        pattern = {
+                            "stories": [story_keys[k.item()] for k in members],
+                            "coherence": float(similarity),
+                            "field_strength": float(
+                                torch.mean(torch.stack([
+                                    self.stories[story_keys[k.item()]].amplitude 
+                                    for k in members
+                                ]))
+                            ),
+                            "center": center,
+                            "radius": radius
+                        }
+                        patterns.append(pattern)
+                        
+                        for k1 in members:
+                            for k2 in members:
+                                if k1 < k2:
+                                    processed_pairs.add((k1.item(), k2.item()))
 
-            connected = (similarity_matrix[i] > threshold).nonzero().squeeze(1)
-            if len(connected) > 2:
-                pattern_stories = [story_keys[j.item()] for j in connected if j.item() < len(story_keys)]
-                pattern = {
-                    "stories": pattern_stories,
-                    "coherence": float(similarity_matrix[i, connected].mean()),
-                    "field_strength": float(
-                        self.stories[story_keys[i]].amplitude
-                    ),
-                }
-                patterns.append(pattern)
-                logger.debug(f"Found pattern: {pattern}")
-                processed_stories.update(pattern_stories)
-
-        # Consider pattern memory in emergence detection
-        for i, pattern_embedding in enumerate(self.pattern_memory.patterns):
-            similarity = torch.cosine_similarity(
-                pattern_embedding.unsqueeze(0),
-                embeddings
-            )
-            if torch.any(similarity > threshold):
-                pattern_stories = [story_keys[j] for j in (similarity > threshold).nonzero().squeeze(1)]
-                new_stories = [story for story in pattern_stories if story not in processed_stories]
-                if new_stories:
-                    pattern = {
-                        "stories": new_stories,
-                        "coherence": float(similarity[similarity > threshold].mean()),
-                        "field_strength": float(self.pattern_memory.pattern_strengths[i]),
-                    }
-                    patterns.append(pattern)
-                    processed_stories.update(new_stories)
-
-        logger.debug(f"Detected {len(patterns)} patterns")
         return patterns
 
     def simulate_timestep(self, dt: float):
@@ -311,6 +373,9 @@ class NarrativeFieldSimulator:
         patterns = self.detect_emergence()
         for pattern in patterns:
             self.pattern_memory.update_patterns(pattern, self.field_state)
+
+        # Update pattern evolution
+        self.pattern_evolution.update(patterns, self.field_state)
 
 
 # Example usage
