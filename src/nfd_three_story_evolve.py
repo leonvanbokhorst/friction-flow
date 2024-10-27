@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import List, Dict
-    from .story import Story  # Assuming Story is defined in a separate file
 
 import sys
 from pathlib import Path
@@ -97,9 +96,7 @@ class ThemeRelationshipMap(BaseClass):
             return self.primary_relationships[(theme2, theme1)]
 
         shared_groups = sum(
-            1
-            for group in self.theme_groups.values()
-            if theme1 in group and theme2 in group
+            theme1 in group and theme2 in group for group in self.theme_groups.values()
         )
         return 0.3 * shared_groups if shared_groups > 0 else 0.1
 
@@ -630,8 +627,7 @@ class EnhancedCollectiveStoryEngine(BaseClass):
 
     async def update_story_states(self):
         for story in self.field.stories:
-            recent_memories = story.memory_layer[-5:]  # Get the 5 most recent memories
-            if recent_memories:
+            if recent_memories := story.memory_layer[-5:]:
                 avg_resonance = np.mean([m.resonance for m in recent_memories])
                 perspective_shifts = []
                 for m in recent_memories:
@@ -739,6 +735,7 @@ class BaseInteractionEngine(BaseClass):
 
 class StoryInteractionEngine(BaseInteractionEngine):
     async def process_interaction(self, story1: Story, story2: Story):
+        # sourcery skip: remove-empty-nested-block, remove-redundant-if
         # Basic interaction processing
         resonance = self.field.detect_resonance(story1, story2)
         if resonance > self.field.resonance_threshold:
@@ -928,11 +925,11 @@ class EnhancedJourneyLogger(BaseClass):
             else 0
         )
 
-        # Safely get unique interactions
-        unique_interactions = set()
-        for memory in story.memory_layer:
-            if hasattr(memory, 'partner_id') and memory.partner_id is not None:
-                unique_interactions.add(memory.partner_id)
+        unique_interactions = {
+            memory.partner_id
+            for memory in story.memory_layer
+            if hasattr(memory, "partner_id") and memory.partner_id is not None
+        }
         num_unique_interactions = len(unique_interactions)
 
         # Emotional journey analysis
@@ -1017,14 +1014,11 @@ class DynamicThemeGenerator(BaseClass):
         response = response.strip().lower()
 
         try:
-            # Extract JSON array from the response
-            json_match = re.search(r"\[.*\]", response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                new_themes = json.loads(json_str)
-            else:
+            if not (json_match := re.search(r"\[.*\]", response, re.DOTALL)):
                 raise ValueError("No JSON array found in response")
 
+            json_str = json_match[0]
+            new_themes = json.loads(json_str)
             # Ensure we have the correct number of themes
             new_themes = [theme.lower() for theme in new_themes[:num_themes]]
             while len(new_themes) < num_themes:
@@ -1133,7 +1127,7 @@ class EnvironmentalEventGenerator(BaseClass):
             self.logger.error(f"Failed to generate or apply environmental event: {e}")
 
 
-async def simulate_field():
+async def simulate_field():  # sourcery skip: low-code-quality
     """Run a simulation of the narrative field"""
     # Set up logging
     logger = logging.getLogger(__name__)
@@ -1152,7 +1146,7 @@ async def simulate_field():
     interaction_engine = EnhancedInteractionEngine(field, llm)
 
     # Generate initial stories
-    for _ in range(15):
+    for _ in range(2):
         story = await story_generator.generate_story(field)
         field.add_story(story)
 
@@ -1160,7 +1154,7 @@ async def simulate_field():
     journey_logger = EnhancedJourneyLogger()
 
     # Simulation loop
-    for t in range(10):
+    for t in range(100):
         field.time = t
 
         # Update physics
