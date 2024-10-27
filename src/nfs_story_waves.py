@@ -121,15 +121,15 @@ class NarrativeFieldSimulator:
         self.energy_threshold = 2.0  # Maximum allowed energy
         self.pattern_memory = PatternMemory(self.stories)
 
-    def create_wave_function(self, content: str) -> NarrativeWave:
-        """Convert story to quantum wave function"""
+    def create_wave_function(self, content: str, story_id: str) -> NarrativeWave:
+        """Convert story to quantum wave function and add to stories dict"""
         # Create semantic embedding
         tokens = self.tokenizer(content, return_tensors="pt", padding=True, truncation=True, max_length=512)
         with torch.no_grad():
             embedding = self.encoder(**tokens).last_hidden_state.mean(dim=1).squeeze(0)
 
         # Initialize quantum properties
-        return NarrativeWave(
+        wave = NarrativeWave(
             content=content,
             embedding=embedding,
             amplitude=torch.tensor([1.0], dtype=torch.float32),
@@ -137,6 +137,8 @@ class NarrativeFieldSimulator:
             coherence=torch.tensor([1.0], dtype=torch.float32),
             entanglement={},
         )
+        self.stories[story_id] = wave
+        return wave
 
     def quantum_interference(self, wave1: NarrativeWave, wave2: NarrativeWave) -> float:
         """Enhanced quantum interference with uncertainty"""
@@ -322,8 +324,8 @@ stories = [
 ]
 
 for i, content in enumerate(stories):
-    wave = simulator.create_wave_function(content)
-    simulator.stories[f"story_{i}"] = wave
+    story_id = f"story_{i}"
+    simulator.create_wave_function(content, story_id)
 
 # Run simulation
 for t in range(100):
@@ -347,4 +349,3 @@ for t in range(100):
         print(f"Field energy: {field_energy:.2f}")
 
     print(f"Number of active stories: {len(simulator.stories)}")
-
