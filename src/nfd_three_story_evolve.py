@@ -908,8 +908,6 @@ class StoryPhysics(BaseClass):
                 story.velocity += self._normalize_force(centering)
                 story.velocity = self._limit_velocity(story.velocity)
 
-                story.velocity = self._limit_velocity(story.velocity)
-
 
 class EnhancedCollectiveStoryEngine(BaseClass):
     """
