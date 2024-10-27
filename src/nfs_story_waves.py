@@ -16,14 +16,17 @@ class NarrativeWave:
 
     content: str
     embedding: torch.Tensor  # Semantic embedding as quantum state
-    amplitude: float  # Story strength/influence
-    phase: float  # Story's phase in narrative space
-    coherence: float  # Measure of story stability
+    amplitude: torch.Tensor  # Story strength/influence
+    phase: torch.Tensor  # Story's phase in narrative space
+    coherence: torch.Tensor  # Measure of story stability
     entanglement: Dict[str, float]  # Connections to other stories
 
     def __post_init__(self):
         assert self.embedding.dim() == 1, f"Embedding must be 1D, got shape {self.embedding.shape}"
         assert self.embedding.shape[0] == 768, f"Embedding must have 768 elements, got {self.embedding.shape[0]}"
+        self.amplitude = torch.tensor(self.amplitude, dtype=torch.float32).view(1)
+        self.phase = torch.tensor(self.phase, dtype=torch.float32).view(1)
+        self.coherence = torch.tensor(self.coherence, dtype=torch.float32).view(1)
 
 
 class NarrativeFieldSimulator:
@@ -46,9 +49,9 @@ class NarrativeFieldSimulator:
         return NarrativeWave(
             content=content,
             embedding=embedding,  # Now guaranteed to be 1D
-            amplitude=1.0,
-            phase=np.random.random() * 2 * np.pi,
-            coherence=1.0,
+            amplitude=torch.tensor([1.0]),
+            phase=torch.tensor([np.random.random() * 2 * np.pi]),
+            coherence=torch.tensor([1.0]),
             entanglement={},
         )
 
@@ -56,39 +59,43 @@ class NarrativeFieldSimulator:
         """Calculate interference between two narrative waves"""
         # Compute quantum interference using cosine similarity and phase
         similarity = torch.cosine_similarity(wave1.embedding.unsqueeze(0), wave2.embedding.unsqueeze(0))
-        phase_factor = np.cos(wave1.phase - wave2.phase)
+        phase_factor = torch.cos(torch.tensor(wave1.phase - wave2.phase))
         return float(similarity * phase_factor)
 
     def apply_field_effects(self, wave: NarrativeWave, dt: float):
         """Apply quantum field effects to a narrative wave"""
         # Simulate quantum evolution
         wave.phase += dt * wave.amplitude
-        wave.coherence *= np.exp(-dt / 10.0)  # Gradual decoherence
+        wave.coherence *= torch.exp(torch.tensor(-dt / 10.0))  # Gradual decoherence
 
         # Apply field interactions
         field_interaction = torch.cosine_similarity(
-            wave.embedding, self.field_state.unsqueeze(0)
+            wave.embedding.unsqueeze(0), self.field_state.unsqueeze(0)
         )
         wave.amplitude *= 1.0 + field_interaction * dt
 
     def update_field_state(self):
         """Update the overall field state based on all stories with non-linear effects"""
-        new_field = torch.zeros(self.quantum_dim, requires_grad=True)
+        contributions = torch.zeros(self.quantum_dim, dtype=torch.complex64)
         
         for story in self.stories.values():
-            # Combine wave functions with phase and amplitude
-            contribution = story.embedding * story.amplitude * torch.exp(1j * story.phase)
-            new_field += contribution.real
+            # Convert phase to tensor and combine wave functions with phase and amplitude
+            phase_tensor = torch.tensor(story.phase, dtype=torch.float32)
+            phase_factor = torch.complex(torch.cos(phase_tensor), torch.sin(phase_tensor))
+            contribution = story.embedding * story.amplitude * phase_factor
+            contributions += contribution
+        
+        new_field = contributions.requires_grad_()
         
         # Apply non-linear transformation
-        field_potential = torch.tanh(new_field)
+        field_potential = torch.tanh(new_field.real)
         
         # Calculate field gradient
         field_gradient = torch.autograd.grad(field_potential.sum(), new_field, create_graph=True)[0]
         
         # Combine linear and non-linear effects
         alpha = 0.7  # Adjustable parameter for balance between linear and non-linear effects
-        self.field_state = alpha * new_field + (1 - alpha) * field_gradient
+        self.field_state = alpha * new_field.real + (1 - alpha) * field_gradient.real
         
         # Normalize field state
         self.field_state = self.field_state / torch.norm(self.field_state)
