@@ -4,6 +4,12 @@ import numpy as np
 from embedding_cache import EmbeddingCache
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Any
+import logging
+from logging_config import setup_logging
+
+# Initialize logging
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Initialize the language model and embedding cache
 language_model = OllamaInterface()
@@ -20,7 +26,6 @@ story_elements = {
         "Woman of his dreams: a beautiful and courageous woman",
     ],
     "setting": [
-        "The story takes place in a dark castle filled with ancient secrets.",
         "The story takes place in a bustling office filled with people and noise.",
     ],
 }
@@ -50,6 +55,7 @@ async def embed_elements(elements_dict):
         if isinstance(value, str):
             embedding = embedding_cache.get(value)
             if embedding is None:
+                logger.debug(f"Generating embedding for: {value[:50]}...")
                 embedding = await language_model.generate_embedding(value)
                 embedding_cache.set(value, embedding)
             embedded_dict[key] = embedding
@@ -58,6 +64,7 @@ async def embed_elements(elements_dict):
             for text in value:
                 embedding = embedding_cache.get(text)
                 if embedding is None:
+                    logger.debug(f"Generating embedding for: {text[:50]}...")
                     embedding = await language_model.generate_embedding(text)
                     embedding_cache.set(text, embedding)
                 embedded_dict[key].append(embedding)
@@ -74,6 +81,7 @@ def apply_narrative(story_embedding, narrative_embedding, weight=0.5):
 async def generate_modified_text(
     original_text: str, modified_embedding: List[float], narrative_modifier: str
 ) -> str:
+    logger.info(f"Generating modified text for: {original_text[:50]}... with modifier: {narrative_modifier}")
     prompt = f"""
     Original text: "{original_text}"
     Narrative modifier: {narrative_modifier}
@@ -88,8 +96,11 @@ async def generate_modified_text(
 
 
 async def main():
+    logger.info("Starting main process")
     # Embed story and narrative elements
+    logger.info("Embedding story elements")
     embedded_story = await embed_elements(story_elements)
+    logger.info("Embedding narrative elements")
     embedded_narratives = {
         category: await embed_elements(mods)
         for category, mods in narrative_modifiers.items()
@@ -102,6 +113,7 @@ async def main():
     ):
         for category, modifiers in narrative_modifiers.items():
             for modifier_name, modifier_embedding in embedded_narratives[category].items():
+                logger.debug(f"Applying narrative modifier: {category} - {modifier_name}")
                 modified_embedding = apply_narrative(
                     event_embedding, modifier_embedding, weight=0.6
                 )
@@ -119,6 +131,7 @@ async def main():
                 }
 
     # Output the modified stories with similarity scores and modified text
+    logger.info("Outputting modified stories")
     for (event_text, category, modifier_name), mod_data in modified_story.items():
         print(f"Original Event: {event_text}")
         print(f"Applied {category.capitalize()}: {modifier_name}")
@@ -127,8 +140,10 @@ async def main():
         print()
 
     # Clean up resources
+    logger.info("Cleaning up resources")
     await language_model.cleanup()
     embedding_cache.clear()  # Clear the cache after use
+    logger.info("Main process completed")
 
 
 if __name__ == "__main__":
