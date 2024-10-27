@@ -16,17 +16,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NarrativeWave:
-    """Represents a story as a quantum wave function"""
+    """
+    Represents a story as a quantum wave function in the narrative field.
+    
+    This class encapsulates the quantum properties of a story, including its
+    semantic embedding, amplitude (influence), phase, coherence, and entanglement
+    with other stories.
+    """
 
-    content: str
-    embedding: torch.Tensor  # Semantic embedding as quantum state
-    amplitude: torch.Tensor  # Story strength/influence
-    phase: torch.Tensor  # Story's phase in narrative space
-    coherence: torch.Tensor  # Measure of story stability
-    entanglement: Dict[str, float]  # Connections to other stories
-    uncertainty: torch.Tensor = field(init=False)
+    content: str  # The actual text content of the story
+    embedding: torch.Tensor  # Semantic embedding as quantum state (768-dimensional vector)
+    amplitude: torch.Tensor  # Story strength/influence (scalar value)
+    phase: torch.Tensor  # Story's phase in narrative space (scalar value)
+    coherence: torch.Tensor  # Measure of story stability (scalar value)
+    entanglement: Dict[str, float]  # Connections to other stories (story_id: entanglement_strength)
+    uncertainty: torch.Tensor = field(init=False)  # Heisenberg uncertainty principle analog
 
     def __post_init__(self):
+        # Validate and normalize the input tensors
         assert self.embedding.dim() == 1, f"Embedding must be 1D, got shape {self.embedding.shape}"
         assert self.embedding.shape[0] == 768, f"Embedding must have 768 elements, got {self.embedding.shape[0]}"
         self.amplitude = self.amplitude.clone().detach().view(1)
@@ -36,15 +43,31 @@ class NarrativeWave:
 
 
 class PatternMemory:
+    """
+    Tracks and updates emergent patterns in the narrative field over time.
+    
+    This class maintains a memory of detected patterns, their strengths,
+    and their temporal evolution throughout the simulation.
+    """
+
     def __init__(self, story_dict: Dict[str, NarrativeWave]):
-        self.patterns: List[torch.Tensor] = []
-        self.pattern_strengths: torch.Tensor = torch.tensor([])
-        self.pattern_history: List[Dict[str, Any]] = []  # Track temporal evolution
-        self.decay_rate: float = 0.95     # Pattern memory decay
-        self.story_dict: Dict[str, NarrativeWave] = story_dict
+        self.patterns: List[torch.Tensor] = []  # List of pattern embeddings
+        self.pattern_strengths: torch.Tensor = torch.tensor([])  # Corresponding pattern strengths
+        self.pattern_history: List[Dict[str, Any]] = []  # Track temporal evolution of patterns
+        self.decay_rate: float = 0.95  # Pattern memory decay rate
+        self.story_dict: Dict[str, NarrativeWave] = story_dict  # Reference to all active stories
 
     def update_patterns(self, new_pattern: Dict[str, Any], field_state: torch.Tensor) -> None:
-        """Enhanced pattern tracking with temporal dynamics"""
+        """
+        Updates the pattern memory with a newly detected pattern.
+        
+        This method handles pattern merging, strength updates, and temporal decay.
+        It also prunes old patterns that fall below a certain strength threshold.
+        
+        Args:
+            new_pattern (Dict[str, Any]): The newly detected pattern
+            field_state (torch.Tensor): Current state of the narrative field
+        """
         pattern_embedding = self.encode_pattern(new_pattern)
         pattern_time = len(self.pattern_history)
         
@@ -52,6 +75,7 @@ class PatternMemory:
         self.pattern_strengths *= self.decay_rate
         
         if len(self.patterns) > 0:
+            # Calculate similarities between new pattern and existing patterns
             similarities = torch.cosine_similarity(
                 pattern_embedding.unsqueeze(0),
                 torch.stack(self.patterns)
@@ -65,12 +89,14 @@ class PatternMemory:
                                     (1 - age_factor) * pattern_embedding)
                 self.pattern_strengths[idx] += 1.0 - age_factor
             else:
+                # Add new pattern if no similar patterns exist
                 self.patterns.append(pattern_embedding)
                 self.pattern_strengths = torch.cat([
                     self.pattern_strengths,
                     torch.tensor([1.0])
                 ])
         else:
+            # Initialize first pattern
             self.patterns.append(pattern_embedding)
             self.pattern_strengths = torch.tensor([1.0])
         
@@ -87,7 +113,18 @@ class PatternMemory:
         self.pattern_strengths = self.pattern_strengths[mask]
 
     def encode_pattern(self, pattern: Dict[str, Any]) -> torch.Tensor:
-        """Enhanced pattern encoding with semantic structure"""
+        """
+        Encodes a pattern into a semantic embedding representation.
+        
+        This method combines the embeddings of stories involved in the pattern,
+        weighted by their coherence and the pattern's overall strength.
+        
+        Args:
+            pattern (Dict[str, Any]): The pattern to encode
+        
+        Returns:
+            torch.Tensor: The encoded pattern embedding
+        """
         # Extract story embeddings
         story_embeddings = []
         for story_id in pattern['stories']:
@@ -114,11 +151,30 @@ class PatternMemory:
 
 
 class PatternEvolution:
+    """
+    Tracks the evolution of patterns over time in the narrative field.
+    
+    This class maintains trajectories of patterns, allowing for analysis
+    of pattern dynamics, stability, and interactions over the course of
+    the simulation.
+    """
+
     def __init__(self):
         self.pattern_trajectories: Dict[int, List[Dict]] = {}
         self.next_pattern_id = 0
     
     def update(self, current_patterns: List[Dict], field_state: torch.Tensor):
+        """
+        Updates the pattern trajectories based on the current detected patterns.
+        
+        This method matches current patterns to existing trajectories or starts
+        new trajectories as needed. It also handles the deactivation of unmatched
+        trajectories.
+        
+        Args:
+            current_patterns (List[Dict]): List of currently detected patterns
+            field_state (torch.Tensor): Current state of the narrative field
+        """
         new_trajectories = {}
         
         for pattern in current_patterns:
@@ -160,20 +216,50 @@ class PatternEvolution:
                 self.pattern_trajectories[pattern_id][-1]["active"] = False
 
     def calculate_pattern_similarity(self, pattern1: Dict, pattern2: Dict) -> float:
+        """
+        Calculates the similarity between two patterns.
+        
+        This method computes the cosine similarity between the center embeddings
+        of two patterns to determine their similarity.
+        
+        Args:
+            pattern1 (Dict): First pattern for comparison
+            pattern2 (Dict): Second pattern for comparison
+        
+        Returns:
+            float: Similarity score between the two patterns
+        """
         # Implement similarity calculation between patterns
-        # This is a placeholder implementation
+        # This is a placeholder implementation using cosine similarity
         return F.cosine_similarity(pattern1["center"].unsqueeze(0), 
                                    pattern2["center"].unsqueeze(0)).item()
 
 
 class PhaseSpaceTracker:
-    """Track system evolution in phase space"""
+    """
+    Tracks the evolution of the narrative field in phase space.
+    
+    This class records the trajectory of the system in a high-dimensional
+    phase space, allowing for analysis of system dynamics, attractors,
+    and overall stability.
+    """
+
     def __init__(self, dim: int):
         self.trajectory = []
         self.phase_space_dim = dim
         
     def record_state(self, field_state: torch.Tensor, patterns: List[Dict]):
-        """Record current state in phase space"""
+        """
+        Records the current state of the narrative field in phase space.
+        
+        This method captures the field state and various pattern properties
+        to construct a comprehensive representation of the system's state
+        at each time step.
+        
+        Args:
+            field_state (torch.Tensor): Current state of the narrative field
+            patterns (List[Dict]): List of currently detected patterns
+        """
         state_vector = {
             'field': field_state.clone(),
             'pattern_coherence': torch.tensor([p['coherence'] for p in patterns] if patterns else [0.0]),
@@ -183,7 +269,16 @@ class PhaseSpaceTracker:
         self.trajectory.append(state_vector)
         
     def analyze_attractor(self) -> Dict:
-        """Analyze attractor properties in phase space"""
+        """
+        Analyzes attractor properties in the phase space trajectory.
+        
+        This method examines recent states in the trajectory to determine
+        stability properties of the field and patterns, as well as
+        identifying dominant frequencies in the system's evolution.
+        
+        Returns:
+            Dict: A dictionary containing attractor properties
+        """
         if len(self.trajectory) < 10:
             return {
                 'field_stability': 0.0,
@@ -222,14 +317,32 @@ class PhaseSpaceTracker:
 
 
 class EnvironmentalCoupling:
-    """Handle system-environment interactions"""
+    """
+    Handles interactions between the narrative field and its environment.
+    
+    This class simulates the effects of external factors on the narrative
+    field, introducing noise and perturbations that can influence the
+    evolution of stories and patterns.
+    """
+
     def __init__(self, temperature: float = 0.1):
         self.temperature = torch.tensor(temperature, dtype=torch.float32)
         self.noise_history = []
         self.correlation_time = torch.tensor(10, dtype=torch.float32)
         
     def generate_colored_noise(self, shape: tuple) -> torch.Tensor:
-        """Generate temporally correlated noise"""
+        """
+        Generates temporally correlated noise to simulate environmental effects.
+        
+        This method produces colored noise that represents persistent
+        environmental influences on the narrative field.
+        
+        Args:
+            shape (tuple): The shape of the noise tensor to generate
+        
+        Returns:
+            torch.Tensor: The generated colored noise
+        """
         white_noise = torch.randn(shape)
         if not self.noise_history:
             self.noise_history = [white_noise]
@@ -246,13 +359,31 @@ class EnvironmentalCoupling:
 
 
 class FrequencyAnalyzer:
-    """Enhance frequency analysis capabilities"""
+    """
+    Performs frequency analysis on the narrative field and patterns.
+    
+    This class uses wavelet decomposition to identify dominant frequencies
+    and rhythms in the evolution of the narrative field and its patterns.
+    """
+
     def __init__(self, window_size: int = 50):
         self.window_size = window_size
         self.frequency_history = []
         
     def analyze_frequencies(self, field_state: torch.Tensor, patterns: List[Dict]) -> Dict:
-        """Multi-scale frequency analysis"""
+        """
+        Performs multi-scale frequency analysis on the field and patterns.
+        
+        This method uses wavelet decomposition to identify dominant frequencies
+        at different scales in the evolution of patterns and the overall field.
+        
+        Args:
+            field_state (torch.Tensor): Current state of the narrative field
+            patterns (List[Dict]): List of currently detected patterns
+        
+        Returns:
+            Dict: A dictionary containing dominant frequencies and their powers
+        """
         if not patterns:
             return {'dominant_frequencies': [], 'frequency_powers': []}
         
@@ -285,12 +416,32 @@ class FrequencyAnalyzer:
 
 
 class StoryInteractionAnalyzer:
-    """Enhanced story interaction analysis"""
+    """
+    Analyzes interactions between stories in the narrative field.
+    
+    This class examines the relationships and influences between different
+    stories, identifying clusters of related stories and quantifying the
+    strength of their interactions.
+    """
+
     def __init__(self):
         self.interaction_history = []
         
     def analyze_interactions(self, stories: Dict[str, NarrativeWave]) -> Dict:
-        """Analyze story interaction patterns"""
+        """
+        Analyzes interaction patterns between stories in the narrative field.
+        
+        This method computes an interaction matrix based on semantic similarity,
+        phase relationships, and amplitude ratios between stories. It then
+        identifies clusters of interacting stories using eigendecomposition.
+        
+        Args:
+            stories (Dict[str, NarrativeWave]): Dictionary of active stories
+        
+        Returns:
+            Dict: A dictionary containing the interaction matrix, eigenvalues,
+                  and identified story clusters
+        """
         story_ids = list(stories.keys())
         n_stories = len(story_ids)
         
@@ -352,13 +503,33 @@ class StoryInteractionAnalyzer:
 
 
 class NarrativeFieldMetrics:
-    """Track and analyze field metrics"""
+    """
+    Tracks and analyzes various metrics of the narrative field.
+    
+    This class computes and maintains a history of key metrics that characterize
+    the state and evolution of the narrative field, including complexity,
+    diversity, and stability measures.
+    """
+
     def __init__(self):
         self.metrics_history = []
         
     def update(self, field_state: torch.Tensor, stories: Dict[str, NarrativeWave], 
                patterns: List[Dict]) -> Dict:
-        """Calculate comprehensive field metrics"""
+        """
+        Calculates comprehensive field metrics for the current state.
+        
+        This method computes various metrics including field complexity (entropy),
+        story diversity, pattern stability, and counts of active stories and patterns.
+        
+        Args:
+            field_state (torch.Tensor): Current state of the narrative field
+            stories (Dict[str, NarrativeWave]): Dictionary of active stories
+            patterns (List[Dict]): List of currently detected patterns
+        
+        Returns:
+            Dict: A dictionary containing the calculated metrics
+        """
         # Calculate field complexity (entropy)
         if field_state.dim() == 1:
             field_state = field_state.unsqueeze(0)  # Add a dimension if 1D
@@ -400,6 +571,15 @@ class NarrativeFieldMetrics:
 
 
 class NarrativeFieldSimulator:
+    """
+    Main class for simulating the evolution of the narrative field.
+    
+    This class integrates all components of the narrative field simulation,
+    including story creation, field evolution, pattern detection, and analysis.
+    It manages the overall simulation process and provides methods for
+    running the simulation and analyzing its results.
+    """
+
     def __init__(self):
         # Initialize quantum semantic space
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
@@ -419,7 +599,19 @@ class NarrativeFieldSimulator:
         self.field_metrics = NarrativeFieldMetrics()
 
     def create_wave_function(self, content: str, story_id: str) -> NarrativeWave:
-        """Convert story to quantum wave function and add to stories dict"""
+        """
+        Converts a story to a quantum wave function and adds it to the stories dict.
+        
+        This method creates a semantic embedding for the story content and
+        initializes its quantum properties (amplitude, phase, coherence).
+        
+        Args:
+            content (str): The text content of the story
+            story_id (str): A unique identifier for the story
+        
+        Returns:
+            NarrativeWave: The created wave function representation of the story
+        """
         # Create semantic embedding
         tokens = self.tokenizer(content, return_tensors="pt", padding=True, truncation=True, max_length=512)
         with torch.no_grad():
@@ -438,7 +630,20 @@ class NarrativeFieldSimulator:
         return wave
 
     def quantum_interference(self, wave1: NarrativeWave, wave2: NarrativeWave) -> float:
-        """More sophisticated quantum interference calculation"""
+        """
+        Calculates the quantum interference between two story wave functions.
+        
+        This method computes a sophisticated interference value based on
+        semantic similarity, phase relationships, coherence, and other
+        quantum-inspired properties of the stories.
+        
+        Args:
+            wave1 (NarrativeWave): First story wave function
+            wave2 (NarrativeWave): Second story wave function
+        
+        Returns:
+            float: The calculated interference value
+        """
         similarity = torch.cosine_similarity(wave1.embedding.unsqueeze(0), 
                                            wave2.embedding.unsqueeze(0))
         phase_factor = torch.cos(wave1.phase - wave2.phase)
@@ -468,7 +673,17 @@ class NarrativeFieldSimulator:
         )
 
     def apply_field_effects(self, wave: NarrativeWave, dt: float):
-        """Enhanced field effects with better damping and stability"""
+        """
+        Applies the effects of the narrative field to a story wave function.
+        
+        This method updates the quantum properties of a story based on its
+        interaction with the overall narrative field, including phase evolution,
+        decoherence, and amplitude changes.
+        
+        Args:
+            wave (NarrativeWave): The story wave function to update
+            dt (float): The time step of the simulation
+        """
         # Phase evolution
         wave.phase += dt * wave.amplitude.clamp(max=10.0)  # Limit maximum phase change
         
@@ -503,7 +718,19 @@ class NarrativeFieldSimulator:
         wave.coherence = wave.coherence.clamp(min=0.1, max=1.0)
 
     def apply_environmental_effects(self, wave: NarrativeWave, dt: float):
-        """Simulate interaction with environment using colored noise"""
+        """
+        Simulates the interaction of a story with the environment.
+        
+        This method applies environmental noise and fluctuations to the
+        story's quantum properties, simulating external influences on the narrative.
+        
+        Args:
+            wave (NarrativeWave): The story wave function to update
+            dt (float): The time step of the simulation
+        
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Updated embedding and vacuum fluctuation
+        """
         colored_noise = self.environmental_coupling.generate_colored_noise(wave.embedding.shape)
         
         environment_coupling = torch.tensor(0.1, dtype=torch.float32)
@@ -515,7 +742,13 @@ class NarrativeFieldSimulator:
         return wave.embedding + colored_noise, vacuum_fluctuation
 
     def enforce_energy_conservation(self):
-        """More sophisticated energy conservation with nan handling"""
+        """
+        Enforces energy conservation in the narrative field.
+        
+        This method ensures that the total energy of the system remains
+        within specified bounds, applying corrections to the field state
+        and story amplitudes when necessary.
+        """
         if torch.isnan(self.field_state).any():
             logger.warning("NaN detected in field state. Resetting to small random values.")
             self.field_state = torch.rand_like(self.field_state) * 1e-6
@@ -544,7 +777,12 @@ class NarrativeFieldSimulator:
         self.field_state *= (1.0 - dissipation)
 
     def update_field_state(self):
-        """Update the overall field state based on all stories with non-linear effects and stability controls"""
+        """
+        Updates the overall field state based on all stories with non-linear effects and stability controls.
+        
+        This method calculates the contributions of all stories to the field state,
+        applies non-linear transformations, and updates the field state accordingly.
+        """
         contributions = torch.zeros(self.quantum_dim, dtype=torch.complex64)
         
         for story in self.stories.values():
@@ -579,7 +817,15 @@ class NarrativeFieldSimulator:
             self.field_state = torch.rand_like(self.field_state) * 1e-6
 
     def detect_emergence(self) -> List[Dict]:
-        """Enhanced pattern detection with better uniqueness handling"""
+        """
+        Enhanced pattern detection with better uniqueness handling.
+        
+        This method detects emergent patterns in the narrative field by
+        identifying groups of similar stories based on their semantic embeddings.
+        
+        Returns:
+            List[Dict]: List of detected patterns
+        """
         patterns = []
         processed_pairs: Set[Tuple[int, int]] = set()
         
@@ -634,7 +880,20 @@ class NarrativeFieldSimulator:
         return patterns
 
     def calculate_pattern_interaction(self, pattern1: Dict, pattern2: Dict) -> Dict:
-        """Enhanced pattern interaction with stability controls"""
+        """
+        Enhanced pattern interaction with stability controls.
+        
+        This method calculates the interaction between two patterns based on
+        their spatial overlap and field interaction, while also considering
+        stability factors.
+        
+        Args:
+            pattern1 (Dict): First pattern for interaction calculation
+            pattern2 (Dict): Second pattern for interaction calculation
+        
+        Returns:
+            Dict: A dictionary containing interaction properties
+        """
         distance = torch.norm(pattern1['center'] - pattern2['center'])
         overlap = torch.max(torch.zeros(1), 
                            (pattern1['radius'] + pattern2['radius'] - distance) / 
@@ -666,7 +925,16 @@ class NarrativeFieldSimulator:
         return base_interaction
 
     def simulate_timestep(self, dt: float):
-        """Simulate one timestep of field evolution with enhanced stability checks"""
+        """
+        Simulates one timestep of field evolution with enhanced stability checks.
+        
+        This method updates the state of the narrative field and all stories
+        based on their interactions, while also handling dynamic story management,
+        energy conservation, pattern detection, and analysis.
+        
+        Args:
+            dt (float): The time step of the simulation
+        """
         # Log the number of active stories at the beginning of each timestep
         logger.info(f"Number of active stories at start of timestep: {len(self.stories)}")
 
