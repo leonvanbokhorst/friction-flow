@@ -1076,8 +1076,7 @@ for t in range(100):
 
     # Check for emergent patterns
     if t % 10 == 0:
-        patterns = simulator.detect_emergence()
-        if patterns:
+        if patterns := simulator.detect_emergence():
             logger.info(f"Timestep {t}: Detected {len(patterns)} emergent patterns")
             for i, pattern in enumerate(patterns):
                 logger.info(f"  Pattern {i + 1}:")
