@@ -213,9 +213,13 @@ class EmotionalState(BaseClass):
         Interaction strength: {interaction_strength}
         Distance between states: {distance}
 
-        Based on this interaction, describe the new positive, neutral, or negative emotional state in 1 sentence:
+        Based on this interaction, your response should be a single word that captures the emotional response to the interaction.:
         """
         new_description = await llm.generate(prompt)
+        new_description = new_description.strip()
+        # strip parentheses
+        new_description = re.sub(r"\([^)]*\)", "", new_description)
+        new_description = new_description.lower()
 
         # Generate a new embedding for the updated emotional state
         new_embedding = await llm.generate_embedding(new_description)
@@ -261,6 +265,7 @@ class Story(BaseClass):
         self._field = None
         if field:
             self.set_field(field)
+        self.theme_influences = {}  # Add this line to track theme influences
 
     def set_field(self, field: "NarrativeField"):
         self._field = field
@@ -365,6 +370,9 @@ class Story(BaseClass):
     def add_memory(self, memory: Memory):
         self.memory_layer.append(memory)
         self.memory_state.update(memory)
+
+    def update_theme_influence(self, theme: str, influence: float):
+        self.theme_influences[theme] = self.theme_influences.get(theme, 0) + influence
 
 
 class NarrativeFieldViz(BaseClass):
@@ -796,6 +804,12 @@ class EnhancedInteractionEngine(BaseInteractionEngine):
             )
             story1.add_memory(memory)
 
+            # Update theme influences
+            shared_themes = set(story1.themes) & set(story2.themes)
+            for theme in shared_themes:
+                story1.update_theme_influence(theme, resonance * 0.1)
+                story2.update_theme_influence(theme, resonance * 0.1)
+
             return resonance, interaction_type
         return 0, None
 
@@ -915,9 +929,10 @@ class EnhancedJourneyLogger(BaseClass):
         )
 
         # Safely get unique interactions
-        unique_interactions = {
-            m["partner_id"] for m in story.memory_layer if "partner_id" in m
-        }
+        unique_interactions = set()
+        for memory in story.memory_layer:
+            if hasattr(memory, 'partner_id') and memory.partner_id is not None:
+                unique_interactions.add(memory.partner_id)
         num_unique_interactions = len(unique_interactions)
 
         # Emotional journey analysis
@@ -959,17 +974,13 @@ class EnhancedJourneyLogger(BaseClass):
                 theme_counts[theme] = theme_counts.get(theme, 0) + 1
 
         most_influential_themes = sorted(
-            story.perspective.theme_influences.items(), key=lambda x: x[1], reverse=True
+            story.theme_influences.items(), key=lambda x: x[1], reverse=True
         )[:3]
 
         return {
             "total_memories": len(story.memory_layer),
             "unique_interactions": len(
-                {
-                    m.partner_id
-                    for m in story.memory_layer
-                    if m.partner_id is not None
-                }
+                {m.partner_id for m in story.memory_layer if m.partner_id is not None}
             ),
             "theme_exposure": theme_counts,
             "total_perspective_shift": story.total_perspective_shift,
@@ -1141,7 +1152,7 @@ async def simulate_field():
     interaction_engine = EnhancedInteractionEngine(field, llm)
 
     # Generate initial stories
-    for _ in range(9):
+    for _ in range(15):
         story = await story_generator.generate_story(field)
         field.add_story(story)
 
@@ -1149,7 +1160,7 @@ async def simulate_field():
     journey_logger = EnhancedJourneyLogger()
 
     # Simulation loop
-    for t in range(100):
+    for t in range(10):
         field.time = t
 
         # Update physics
