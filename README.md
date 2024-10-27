@@ -14,7 +14,7 @@ Friction Flow is an advanced Python-based research project aimed at developing a
 
 ## Technical Stack
 
-- **Python**: Core programming language (version 3.12.6 recommended)
+ **Python**: Core programming language (version >= 3.12 recommended)
 - **PyTorch**: For neural network components and tensor operations
 - **Transformers**: For integration with pre-trained language models
 - **Ray**: For distributed computing
