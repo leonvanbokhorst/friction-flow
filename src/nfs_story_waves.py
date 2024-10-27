@@ -32,13 +32,20 @@ class NarrativeWave:
 
 
 class PatternMemory:
-    def __init__(self):
-        self.patterns = []
-        self.pattern_strengths = torch.tensor([])
-        
-    def update_patterns(self, new_pattern, field_state):
-        """Track and evolve observed patterns"""
+    def __init__(self, story_dict: Dict[str, NarrativeWave]):
+        self.patterns: List[torch.Tensor] = []
+        self.pattern_strengths: torch.Tensor = torch.tensor([])
+        self.pattern_history: List[Dict[str, Any]] = []  # Track temporal evolution
+        self.decay_rate: float = 0.95     # Pattern memory decay
+        self.story_dict: Dict[str, NarrativeWave] = story_dict
+
+    def update_patterns(self, new_pattern: Dict[str, Any], field_state: torch.Tensor) -> None:
+        """Enhanced pattern tracking with temporal dynamics"""
         pattern_embedding = self.encode_pattern(new_pattern)
+        pattern_time = len(self.pattern_history)
+        
+        # Apply temporal decay to existing patterns
+        self.pattern_strengths *= self.decay_rate
         
         if len(self.patterns) > 0:
             similarities = torch.cosine_similarity(
@@ -46,24 +53,60 @@ class PatternMemory:
                 torch.stack(self.patterns)
             )
             
+            # Enhanced pattern merging with temporal weighting
             if torch.any(similarities > 0.9):
                 idx = torch.argmax(similarities)
-                self.patterns[idx] = 0.9 * self.patterns[idx] + 0.1 * pattern_embedding
+                age_factor = torch.exp(torch.tensor(-0.1 * (pattern_time - len(self.pattern_history))))
+                self.patterns[idx] = (age_factor * self.patterns[idx] + 
+                                    (1 - age_factor) * pattern_embedding)
+                self.pattern_strengths[idx] += 1.0 - age_factor
             else:
                 self.patterns.append(pattern_embedding)
+                self.pattern_strengths = torch.cat([
+                    self.pattern_strengths,
+                    torch.tensor([1.0])
+                ])
         else:
             self.patterns.append(pattern_embedding)
+            self.pattern_strengths = torch.tensor([1.0])
         
-        # Update pattern strengths based on field state
-        self.pattern_strengths = torch.tensor([
-            torch.cosine_similarity(p.unsqueeze(0), field_state.unsqueeze(0))
-            for p in self.patterns
-        ])
+        # Update temporal history
+        self.pattern_history.append({
+            'time': pattern_time,
+            'embedding': pattern_embedding,
+            'field_state': field_state.clone()
+        })
+        
+        # Prune old patterns below strength threshold
+        mask = self.pattern_strengths > 0.1
+        self.patterns = [p for p, m in zip(self.patterns, mask) if m]
+        self.pattern_strengths = self.pattern_strengths[mask]
 
-    def encode_pattern(self, pattern: Dict) -> torch.Tensor:
-        # Implement pattern encoding logic here
-        # This is a placeholder implementation
-        return torch.randn(768)  # Same dimension as story embeddings
+    def encode_pattern(self, pattern: Dict[str, Any]) -> torch.Tensor:
+        """Enhanced pattern encoding with semantic structure"""
+        # Extract story embeddings
+        story_embeddings = []
+        for story_id in pattern['stories']:
+            if story_id in self.story_dict:
+                story_embeddings.append(self.story_dict[story_id].embedding)
+            else:
+                logger.warning(f"Story {story_id} not found in story_dict")
+        
+        if not story_embeddings:
+            logger.warning("No valid story embeddings found for pattern")
+            return torch.zeros(768)
+            
+        # Combine embeddings weighted by coherence
+        combined = torch.stack(story_embeddings).mean(dim=0)
+        
+        # Add pattern metadata as modulation
+        coherence_factor = torch.tensor(pattern['coherence'], dtype=torch.float32)
+        strength_factor = torch.tensor(pattern['field_strength'], dtype=torch.float32)
+        
+        # Modulate combined embedding
+        modulated = combined * coherence_factor * strength_factor
+        
+        return torch.nn.functional.normalize(modulated, dim=0)
 
 
 class NarrativeFieldSimulator:
@@ -76,7 +119,7 @@ class NarrativeFieldSimulator:
         self.field_state = torch.zeros(self.quantum_dim)
         self.total_energy = 1.0  # System's total energy
         self.energy_threshold = 2.0  # Maximum allowed energy
-        self.pattern_memory = PatternMemory()
+        self.pattern_memory = PatternMemory(self.stories)
 
     def create_wave_function(self, content: str) -> NarrativeWave:
         """Convert story to quantum wave function"""
@@ -293,3 +336,4 @@ for t in range(100):
         print(f"Field energy: {field_energy:.2f}")
 
     print(f"Number of active stories: {len(simulator.stories)}")
+
