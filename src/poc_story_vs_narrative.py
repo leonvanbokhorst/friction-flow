@@ -20,13 +20,16 @@ story_elements = {
     "events": [
         "A young woman sets out on a journey to reclaim a stolen treasure.",
         "The hero faces numerous challenges in a dark forest.",
+        "The boy is bullied by his classmates.",
     ],
     "characters": [
-        "Hero: a brave and determined young person",
-        "Woman of his dreams: a beautiful and courageous woman",
+        "Hero: a brave, strong, and angry young person",
+        "Woman of his dreams: a beautiful, chubby, and courageous woman",
+        "Boy: a shy, anxious, and bullied boy",
     ],
     "setting": [
         "The story takes place in a bustling office filled with people and noise.",
+        "The story takes place in a dark forest filled with ancient creatures.",
     ],
 }
 
@@ -81,7 +84,9 @@ def apply_narrative(story_embedding, narrative_embedding, weight=0.5):
 async def generate_modified_text(
     original_text: str, modified_embedding: List[float], narrative_modifier: str
 ) -> str:
-    logger.info(f"Generating modified text for: {original_text[:50]}... with modifier: {narrative_modifier}")
+    logger.info(
+        f"Generating modified text for: {original_text[:50]}... with modifier: {narrative_modifier}"
+    )
     prompt = f"""
     Original text: "{original_text}"
     Narrative modifier: {narrative_modifier}
@@ -112,12 +117,18 @@ async def main():
         story_elements["events"], embedded_story["events"]
     ):
         for category, modifiers in narrative_modifiers.items():
-            for modifier_name, modifier_embedding in embedded_narratives[category].items():
-                logger.debug(f"Applying narrative modifier: {category} - {modifier_name}")
+            for modifier_name, modifier_embedding in embedded_narratives[
+                category
+            ].items():
+                logger.debug(
+                    f"Applying narrative modifier: {category} - {modifier_name}"
+                )
                 modified_embedding = apply_narrative(
                     event_embedding, modifier_embedding, weight=0.6
                 )
-                similarity = cosine_similarity([event_embedding], [modified_embedding])[0][0]
+                similarity = cosine_similarity([event_embedding], [modified_embedding])[
+                    0
+                ][0]
 
                 # Generate modified text
                 modified_text = await generate_modified_text(
