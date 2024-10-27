@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoModel
 import logging
 import torch.nn.functional as F
 import torch.fft
+import random
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -174,30 +175,48 @@ class PhaseSpaceTracker:
         """Record current state in phase space"""
         state_vector = {
             'field': field_state.clone(),
-            'pattern_coherence': torch.tensor([p['coherence'] for p in patterns]),
-            'pattern_strength': torch.tensor([p['field_strength'] for p in patterns]),
-            'pattern_radius': torch.tensor([p['radius'] for p in patterns])
+            'pattern_coherence': torch.tensor([p['coherence'] for p in patterns] if patterns else [0.0]),
+            'pattern_strength': torch.tensor([p['field_strength'] for p in patterns] if patterns else [0.0]),
+            'pattern_radius': torch.tensor([p['radius'] for p in patterns] if patterns else [0.0])
         }
         self.trajectory.append(state_vector)
         
     def analyze_attractor(self) -> Dict:
         """Analyze attractor properties in phase space"""
         if len(self.trajectory) < 10:
-            return {}
+            return {
+                'field_stability': 0.0,
+                'strength_stability': 0.0,
+                'dominant_frequency': 0.0
+            }
             
         recent_states = self.trajectory[-10:]
         
         field_variance = torch.var(torch.stack([s['field'] for s in recent_states]))
-        strength_variance = torch.var(torch.stack([s['pattern_strength'] for s in recent_states]))
         
-        strength_series = torch.stack([s['pattern_strength'] for s in recent_states])
-        fft = torch.fft.fft(strength_series)
-        frequencies = torch.fft.fftfreq(len(strength_series))
+        # Handle case where pattern_strength might be empty
+        strength_tensors = [s['pattern_strength'] for s in recent_states if s['pattern_strength'].numel() > 0]
+        if strength_tensors:
+            strength_variance = torch.var(torch.cat(strength_tensors))
+            strength_series = torch.cat(strength_tensors)
+            if strength_series.numel() > 1:
+                fft = torch.fft.fft(strength_series)
+                frequencies = torch.fft.fftfreq(len(strength_series))
+                dominant_frequency = float(frequencies[torch.argmax(torch.abs(fft))])
+            else:
+                dominant_frequency = 0.0
+        else:
+            strength_variance = torch.tensor(0.0)
+            dominant_frequency = 0.0
+        
+        # Avoid division by zero
+        field_stability = float(1.0 / (1.0 + field_variance)) if field_variance != 0 else 1.0
+        strength_stability = float(1.0 / (1.0 + strength_variance)) if strength_variance != 0 else 1.0
         
         return {
-            'field_stability': float(1.0 / (1.0 + field_variance)),
-            'strength_stability': float(1.0 / (1.0 + strength_variance)),
-            'dominant_frequency': float(frequencies[torch.argmax(torch.abs(fft))])
+            'field_stability': field_stability,
+            'strength_stability': strength_stability,
+            'dominant_frequency': dominant_frequency
         }
 
 
@@ -239,6 +258,7 @@ class NarrativeFieldSimulator:
         self.pattern_evolution = PatternEvolution()
         self.phase_space_tracker = PhaseSpaceTracker(self.quantum_dim)
         self.environmental_coupling = EnvironmentalCoupling()
+        self.current_timestep = 0
 
     def create_wave_function(self, content: str, story_id: str) -> NarrativeWave:
         """Convert story to quantum wave function and add to stories dict"""
@@ -290,28 +310,39 @@ class NarrativeFieldSimulator:
         )
 
     def apply_field_effects(self, wave: NarrativeWave, dt: float):
-        """Enhanced field effects with better damping"""
-        # Original evolution
-        wave.phase += dt * wave.amplitude
+        """Enhanced field effects with better damping and stability"""
+        # Phase evolution
+        wave.phase += dt * wave.amplitude.clamp(max=10.0)  # Limit maximum phase change
         
         # Enhanced decoherence with amplitude-dependent damping
-        decoherence_rate = torch.tensor(-dt / 10.0) * (1.0 + 0.1 * wave.amplitude)
-        wave.coherence *= torch.exp(decoherence_rate)
+        decoherence_rate = torch.tensor(-dt / 10.0) * (1.0 + 0.1 * wave.amplitude.clamp(max=5.0))
+        wave.coherence *= torch.exp(decoherence_rate).clamp(min=0.1, max=1.0)
         
         # Field interaction with damping
         field_interaction = torch.cosine_similarity(
             wave.embedding.unsqueeze(0), 
             self.field_state.unsqueeze(0)
-        )
+        ).clamp(min=-1.0, max=1.0)
         
         # Damped amplitude evolution
-        damping_factor = torch.exp(-0.01 * wave.amplitude)  # Stronger damping for higher amplitudes
-        wave.amplitude *= (1.0 + field_interaction * dt) * damping_factor
+        damping_factor = torch.exp(-0.01 * wave.amplitude.clamp(max=10.0))
+        amplitude_change = (1.0 + field_interaction * dt) * damping_factor
+        wave.amplitude *= amplitude_change.clamp(min=0.1, max=2.0)
 
-        # Apply environmental effects (keep this part from the original method)
+        # Apply environmental effects
         env_embedding, vacuum_fluctuation = self.apply_environmental_effects(wave, dt)
         wave.embedding = 0.9 * wave.embedding + 0.1 * env_embedding
         self.field_state += vacuum_fluctuation
+
+        # Ensure all tensor values are finite
+        wave.amplitude = torch.where(torch.isfinite(wave.amplitude), wave.amplitude, torch.tensor([1.0]))
+        wave.coherence = torch.where(torch.isfinite(wave.coherence), wave.coherence, torch.tensor([1.0]))
+        wave.embedding = torch.where(torch.isfinite(wave.embedding), wave.embedding, torch.rand_like(wave.embedding) * 1e-6)
+
+        # More gradual coherence change
+        coherence_change = torch.randn(1) * 0.01  # Small random change
+        wave.coherence += coherence_change
+        wave.coherence = wave.coherence.clamp(min=0.1, max=1.0)
 
     def apply_environmental_effects(self, wave: NarrativeWave, dt: float):
         """Simulate interaction with environment using colored noise"""
@@ -326,8 +357,17 @@ class NarrativeFieldSimulator:
         return wave.embedding + colored_noise, vacuum_fluctuation
 
     def enforce_energy_conservation(self):
-        """More sophisticated energy conservation"""
+        """More sophisticated energy conservation with nan handling"""
+        if torch.isnan(self.field_state).any():
+            logger.warning("NaN detected in field state. Resetting to small random values.")
+            self.field_state = torch.rand_like(self.field_state) * 1e-6
+        
         current_energy = torch.norm(self.field_state)
+        if torch.isnan(current_energy) or current_energy == 0:
+            logger.warning("Invalid current energy. Resetting field state.")
+            self.field_state = torch.rand_like(self.field_state) * 1e-6
+            current_energy = torch.norm(self.field_state)
+        
         if current_energy > self.energy_threshold:
             # Calculate excess energy
             excess = current_energy - self.total_energy
@@ -346,30 +386,39 @@ class NarrativeFieldSimulator:
         self.field_state *= (1.0 - dissipation)
 
     def update_field_state(self):
-        """Update the overall field state based on all stories with non-linear effects"""
+        """Update the overall field state based on all stories with non-linear effects and stability controls"""
         contributions = torch.zeros(self.quantum_dim, dtype=torch.complex64)
         
         for story in self.stories.values():
-            # Convert phase to tensor and combine wave functions with phase and amplitude
-            phase_tensor = torch.tensor(story.phase, dtype=torch.float32)
+            phase_tensor = story.phase.clone().detach()  # Use clone().detach() instead of torch.tensor()
             phase_factor = torch.complex(torch.cos(phase_tensor), torch.sin(phase_tensor))
             contribution = story.embedding * story.amplitude * phase_factor
             contributions += contribution
         
         new_field = contributions.requires_grad_()
         
-        # Apply non-linear transformation
-        field_potential = torch.tanh(new_field.real)
+        # Apply non-linear transformation with stability control
+        field_potential = torch.tanh(new_field.abs().clamp(min=-10, max=10))
         
-        # Calculate field gradient
+        # Calculate field gradient with stability control
         field_gradient = torch.autograd.grad(field_potential.sum(), new_field, create_graph=True)[0]
+        field_gradient_abs = field_gradient.abs().clamp(min=-1, max=1)
+        field_gradient_angle = torch.angle(field_gradient)
+        field_gradient = field_gradient_abs * torch.complex(torch.cos(field_gradient_angle), torch.sin(field_gradient_angle))
         
         # Combine linear and non-linear effects
-        alpha = 0.7  # Adjustable parameter for balance between linear and non-linear effects
-        self.field_state = alpha * new_field.real + (1 - alpha) * field_gradient.real
+        alpha = 0.7
+        self.field_state = (alpha * new_field + (1 - alpha) * field_gradient).real
+        
+        # Ensure field state values are finite
+        self.field_state = torch.where(torch.isfinite(self.field_state), self.field_state, torch.rand_like(self.field_state) * 1e-6)
         
         # Normalize field state
-        self.field_state = self.field_state / torch.norm(self.field_state)
+        norm = torch.norm(self.field_state)
+        if norm > 0:
+            self.field_state = self.field_state / norm
+        else:
+            self.field_state = torch.rand_like(self.field_state) * 1e-6
 
     def detect_emergence(self) -> List[Dict]:
         """Enhanced pattern detection with better uniqueness handling"""
@@ -377,6 +426,12 @@ class NarrativeFieldSimulator:
         processed_pairs: Set[Tuple[int, int]] = set()
         
         story_keys = list(self.stories.keys())
+        
+        # Check if there are any stories to process
+        if not story_keys:
+            logger.warning("No stories available for pattern detection")
+            return patterns
+        
         embeddings = torch.stack([self.stories[key].embedding for key in story_keys])
         
         similarity_matrix = torch.cosine_similarity(
@@ -422,41 +477,41 @@ class NarrativeFieldSimulator:
 
     def calculate_pattern_interaction(self, pattern1: Dict, pattern2: Dict) -> Dict:
         """Enhanced pattern interaction with stability controls"""
-        # Calculate base interaction (using existing logic)
         distance = torch.norm(pattern1['center'] - pattern2['center'])
         overlap = torch.max(torch.zeros(1), 
                            (pattern1['radius'] + pattern2['radius'] - distance) / 
                            (pattern1['radius'] + pattern2['radius']))
         
-        phase_coherence = torch.cos(pattern1['phase'] - pattern2['phase'])
-        
         field_interaction = torch.cosine_similarity(
             pattern1['center'].unsqueeze(0),
             pattern2['center'].unsqueeze(0)
-        )
+        ).clamp(min=-1, max=1)
         
         base_interaction = {
             'overlap': float(overlap),
-            'phase_coherence': float(phase_coherence),
             'field_interaction': float(field_interaction),
-            'interaction_strength': float(overlap * phase_coherence * field_interaction)
+            'interaction_strength': float(overlap * field_interaction)
         }
         
-        # Add stability terms
         stability_factor = torch.exp(
             -0.1 * (pattern1['field_strength'] + pattern2['field_strength'])
-        )
+        ).clamp(min=0.1, max=1.0)
         
-        # Modify interaction strength
         base_interaction['interaction_strength'] *= float(stability_factor)
-        
-        # Add stability metrics
         base_interaction['stability'] = float(stability_factor)
+        
+        # Ensure all values are finite
+        for key, value in base_interaction.items():
+            if not np.isfinite(value):
+                base_interaction[key] = 0.0
         
         return base_interaction
 
     def simulate_timestep(self, dt: float):
-        """Simulate one timestep of field evolution"""
+        """Simulate one timestep of field evolution with enhanced stability checks"""
+        # Log the number of active stories at the beginning of each timestep
+        logger.info(f"Number of active stories at start of timestep: {len(self.stories)}")
+
         # Update all wave functions
         for story in self.stories.values():
             self.apply_field_effects(story, dt)
@@ -481,12 +536,29 @@ class NarrativeFieldSimulator:
         self.update_field_state()
 
         # Remove fully decohered stories
+        initial_story_count = len(self.stories)
         self.stories = {k: v for k, v in self.stories.items() if v.coherence > 0.1}
+        removed_stories = initial_story_count - len(self.stories)
+        if removed_stories > 0:
+            logger.info(f"Removed {removed_stories} fully decohered stories")
+
+        # Dynamic story management
+        if random.random() < 0.1:  # 10% chance each timestep
+            if random.random() < 0.5 and len(self.stories) > 5:  # 50% chance to remove a story if more than 5 exist
+                story_to_remove = random.choice(list(self.stories.keys()))
+                del self.stories[story_to_remove]
+                logger.info(f"Removed story: {story_to_remove}")
+            else:  # 50% chance to add a new story
+                new_story = f"New research finding at timestep {self.current_timestep}"
+                new_story_id = f"story_{len(self.stories)}"
+                self.create_wave_function(new_story, new_story_id)
+                logger.info(f"Added new story: {new_story}")
 
         # Enforce energy conservation
         self.enforce_energy_conservation()
 
         # Update pattern memory
+        self.pattern_memory.story_dict = self.stories  # Update story_dict before detecting patterns
         patterns = self.detect_emergence()
         for pattern in patterns:
             self.pattern_memory.update_patterns(pattern, self.field_state)
@@ -509,7 +581,29 @@ class NarrativeFieldSimulator:
         # Analyze attractor properties periodically
         if len(self.phase_space_tracker.trajectory) % 100 == 0:
             attractor_properties = self.phase_space_tracker.analyze_attractor()
+            field_energy = torch.norm(self.field_state)
+            
+            if torch.isnan(field_energy):
+                logger.warning("NaN detected in field energy calculation.")
+            
             logger.info(f"Attractor properties: {attractor_properties}")
+            logger.info(f"Current field energy: {field_energy:.4f}")
+            logger.info(f"Number of active stories: {len(self.stories)}")
+            if self.stories:
+                avg_coherence = sum(story.coherence.item() for story in self.stories.values()) / len(self.stories)
+                logger.info(f"Average story coherence: {avg_coherence:.4f}")
+
+        # Log the number of active stories at the end of the timestep
+        logger.info(f"Number of active stories at end of timestep: {len(self.stories)}")
+
+        # Global stability check
+        for story in self.stories.values():
+            story.amplitude = story.amplitude.clamp(min=0.1, max=10.0)
+            story.coherence = story.coherence.clamp(min=0.1, max=1.0)
+            story.embedding = torch.where(torch.isfinite(story.embedding), story.embedding, torch.rand_like(story.embedding) * 1e-6)
+        
+        self.field_state = torch.where(torch.isfinite(self.field_state), self.field_state, torch.rand_like(self.field_state) * 1e-6)
+        self.field_state = self.field_state.clamp(min=-10, max=10)
 
 
 # Example usage
@@ -528,24 +622,35 @@ for i, content in enumerate(stories):
 
 # Run simulation
 for t in range(100):
+    simulator.current_timestep = t
     simulator.simulate_timestep(0.1)
+
+    # Add a new story every 10 timesteps
+    if t % 10 == 0:
+        new_story = f"New research finding at timestep {t}"
+        new_story_id = f"story_{len(simulator.stories)}"
+        simulator.create_wave_function(new_story, new_story_id)
+        logger.info(f"Added new story: {new_story}")
 
     # Check for emergent patterns
     if t % 10 == 0:
         patterns = simulator.detect_emergence()
         if patterns:
-            print(f"Timestep {t}: Detected {len(patterns)} emergent patterns")
+            logger.info(f"Timestep {t}: Detected {len(patterns)} emergent patterns")
             for i, pattern in enumerate(patterns):
-                print(f"  Pattern {i + 1}:")
-                print(f"    Stories: {', '.join(pattern['stories'])}")
-                print(f"    Coherence: {pattern['coherence']:.2f}")
-                print(f"    Field Strength: {pattern['field_strength']:.2f}")
+                logger.info(f"  Pattern {i + 1}:")
+                logger.info(f"    Stories: {', '.join(pattern['stories'])}")
+                logger.info(f"    Coherence: {pattern['coherence']:.2f}")
+                logger.info(f"    Field Strength: {pattern['field_strength']:.2f}")
         else:
-            print(f"Timestep {t}: No emergent patterns detected")
+            logger.info(f"Timestep {t}: No emergent patterns detected")
 
         # Analyze pattern effects on field
         field_energy = torch.norm(simulator.field_state)
-        print(f"Field energy: {field_energy:.2f}")
+        logger.info(f"Field energy: {field_energy:.2f}")
 
-    print(f"Number of active stories: {len(simulator.stories)}")
+    logger.info(f"Number of active stories: {len(simulator.stories)}")
+
+
+
 
