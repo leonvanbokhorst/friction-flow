@@ -52,12 +52,49 @@ Friction Flow is an advanced Python-based research project aimed at developing a
 
 - `src/`: Contains the core source code
   - `nfs_story_waves.py`: Simulation components for narrative field dynamics
+  - `nfd_three_story_evolve.py`: Enhanced simulation with three interacting stories
   - `nfs_simple_lab_scenario.py`: Example scenario implementation
   - `language_models.py`: Interfaces for various language models
   - `config.py`: Configuration settings
 - `tests/`: Unit and integration tests
 - `pocs/`: Proof of concept implementations
-- `.github/`: Issue templates and CI/CD workflows
+
+## Latest Proof of Concept Implementations
+
+### nfs_story_waves.py
+
+This PoC implements a quantum-inspired approach to modeling narrative dynamics. Key features include:
+
+- `NarrativeWave`: Represents stories as quantum wave functions in a narrative field.
+- `NarrativeFieldSimulator`: Main class for simulating the evolution of the narrative field.
+- Quantum-inspired operations for story interactions and field evolution.
+- Pattern detection and emergence analysis.
+- Frequency analysis of narrative field dynamics.
+
+This implementation explores the potential of quantum concepts in modeling complex narrative interactions and emergent behaviors.
+
+### nfd_three_story_evolve.py
+
+This PoC focuses on the detailed evolution of three interacting stories within a narrative field. Key components include:
+
+- `Story`: Enhanced representation of individual narratives with emotional states and memory.
+- `StoryPhysics`: Simulates the motion and interactions of stories in the narrative field.
+- `EnhancedCollectiveStoryEngine`: Manages the collective narrative emerging from story interactions.
+- `EnhancedInteractionEngine`: Processes detailed interactions between stories.
+
+This implementation provides a more granular look at story evolution and interaction dynamics.
+
+### nfs_simple_lab_scenario.py
+
+This PoC demonstrates a practical application of the Narrative Field System in a simulated lab environment. Key features include:
+
+- `NarrativeField`: Main class orchestrating the entire system.
+- `FieldAnalyzer`: Analyzes the impact of stories on the field state.
+- `ResonanceDetector`: Finds similarities between stories.
+- `VectorStore`: Manages storage and retrieval of story embeddings.
+- A demo scenario simulating events in a research lab, showcasing how the system can model real-world narrative dynamics.
+
+This implementation showcases how the Narrative Field System can be applied to analyze and track narrative dynamics in a specific context.
 
 ## Development Guidelines
 
