@@ -1,3 +1,43 @@
+"""
+Proof of Concept: Story vs Narrative Modification
+
+This module demonstrates the application of narrative modifiers to story elements
+using language models and embedding techniques. It explores how different narrative
+aspects (tone, perspective, purpose) can alter the presentation of a story while
+maintaining its core elements.
+
+Key Components:
+    - Story Elements: Events, characters, and settings that form the base narrative.
+    - Narrative Modifiers: Tone, perspective, and purpose modifiers to alter the story.
+    - Embedding Generation: Using a language model to create vector representations of text.
+    - Narrative Application: Combining story and narrative embeddings to create modified stories.
+    - Text Generation: Using a language model to generate modified story text based on embeddings.
+
+The module uses asynchronous programming for efficient processing and includes
+caching mechanisms to optimize embedding generation.
+
+Main Functions:
+    - embed_elements: Generate embeddings for story or narrative elements.
+    - apply_narrative: Combine story and narrative embeddings.
+    - generate_modified_text: Create new text based on original story and narrative modifier.
+    - main: Orchestrate the entire process of story modification and output generation.
+
+Dependencies:
+    - asyncio: For asynchronous programming.
+    - numpy: For numerical operations on embeddings.
+    - sklearn: For computing cosine similarity between embeddings.
+    - logging: For structured logging throughout the module.
+
+Usage:
+    Run this module directly to see a demonstration of story modification:
+    ```
+    python src/poc_story_vs_narrative.py
+    ```
+
+Note:
+    This is a proof of concept and may require further optimization for large-scale use.
+"""
+
 import asyncio
 from language_models import OllamaInterface
 import numpy as np
@@ -51,8 +91,23 @@ narrative_modifiers = {
 }
 
 
-# Modified embed_elements function to use the cache
-async def embed_elements(elements_dict):
+async def embed_elements(elements_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Embed story or narrative elements using the language model and cache the results.
+
+    This function takes a dictionary of elements (either story elements or narrative modifiers)
+    and generates embeddings for each element. It uses a cache to avoid regenerating embeddings
+    for previously seen elements.
+
+    Args:
+        elements_dict (Dict[str, Any]): A dictionary containing story elements or narrative modifiers.
+
+    Returns:
+        Dict[str, Any]: A dictionary with the same structure as the input, but with embeddings instead of text.
+
+    Note:
+        This function is asynchronous and requires an active event loop to run.
+    """
     embedded_dict = {}
     for key, value in elements_dict.items():
         if isinstance(value, str):
@@ -74,16 +129,44 @@ async def embed_elements(elements_dict):
     return embedded_dict
 
 
-# Function to apply a narrative modifier to a story element
-def apply_narrative(story_embedding, narrative_embedding, weight=0.5):
-    return (1 - weight) * np.array(story_embedding) + weight * np.array(
-        narrative_embedding
-    )
+def apply_narrative(story_embedding: List[float], narrative_embedding: List[float], weight: float = 0.5) -> np.ndarray:
+    """
+    Apply a narrative modifier to a story element embedding.
+
+    This function combines the story embedding and narrative embedding using a weighted sum.
+
+    Args:
+        story_embedding (List[float]): The embedding of the original story element.
+        narrative_embedding (List[float]): The embedding of the narrative modifier.
+        weight (float, optional): The weight given to the narrative modifier. Defaults to 0.5.
+
+    Returns:
+        np.ndarray: The modified embedding combining the story and narrative.
+    """
+    return (1 - weight) * np.array(story_embedding) + weight * np.array(narrative_embedding)
 
 
 async def generate_modified_text(
     original_text: str, modified_embedding: List[float], narrative_modifier: str
 ) -> str:
+    """
+    Generate modified text based on the original text and a narrative modifier.
+
+    This function uses the language model to rewrite the original text applying the specified
+    narrative modifier. It adjusts the tone, perspective, and style while keeping the main
+    events and characters.
+
+    Args:
+        original_text (str): The original story text.
+        modified_embedding (List[float]): The modified embedding (not used in the current implementation).
+        narrative_modifier (str): A description of the narrative modifier to apply.
+
+    Returns:
+        str: The modified text after applying the narrative modifier.
+
+    Note:
+        This function is asynchronous and requires an active event loop to run.
+    """
     logger.info(
         f"Generating modified text for: {original_text[:50]}... with modifier: {narrative_modifier}"
     )
@@ -101,7 +184,21 @@ async def generate_modified_text(
 
 
 async def main():
+    """
+    Main function to demonstrate the story modification process.
+
+    This function performs the following steps:
+    1. Embeds story elements and narrative modifiers.
+    2. Applies narrative modifiers to story events.
+    3. Generates modified text for each combination of event and modifier.
+    4. Outputs the results, including similarity scores and modified text.
+    5. Cleans up resources.
+
+    Note:
+        This function is asynchronous and requires an active event loop to run.
+    """
     logger.info("Starting main process")
+    
     # Embed story and narrative elements
     logger.info("Embedding story elements")
     embedded_story = await embed_elements(story_elements)
