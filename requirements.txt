@@ -11,3 +11,5 @@ pytest-asyncio
 pytest-mock
 transformers
 PyWavelets
+scikit-learn
+sentence-transformers
