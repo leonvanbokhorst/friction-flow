@@ -322,9 +322,13 @@ class StoryInteractionAnalyzer:
                 
                 interaction_matrix[i, j] = interaction_matrix[j, i] = interaction_strength
         
-        # Analyze interaction structure
-        eigenvalues, eigenvectors = torch.linalg.eigh(interaction_matrix)
-        
+        try:
+            eigenvalues, eigenvectors = torch.linalg.eigh(interaction_matrix)
+        except torch._C._LinAlgError:
+            # Fallback to SVD if eigh fails
+            U, S, V = torch.svd(interaction_matrix)
+            eigenvalues, eigenvectors = S, V
+
         # Find interaction clusters
         clusters = []
         threshold = 0.7
@@ -376,9 +380,10 @@ class NarrativeFieldMetrics:
         # Calculate pattern stability
         if patterns:
             pattern_strengths = torch.tensor([p['field_strength'] for p in patterns])
-            pattern_stability = 1.0 / (1.0 + torch.std(pattern_strengths))
-            if torch.isnan(pattern_stability):
-                pattern_stability = 0.0
+            if len(pattern_strengths) > 1:
+                pattern_stability = 1.0 / (1.0 + torch.std(pattern_strengths))
+            else:
+                pattern_stability = 1.0  # If there's only one pattern, consider it stable
         else:
             pattern_stability = 0.0
             
@@ -700,7 +705,7 @@ class NarrativeFieldSimulator:
             if random.random() < 0.5 and len(self.stories) > 5:  # 50% chance to remove a story if more than 5 exist
                 story_to_remove = random.choice(list(self.stories.keys()))
                 del self.stories[story_to_remove]
-                logger.info(f"Removed story: {story_to_remove}")
+                logger.info(f"Randomly removed story: {story_to_remove}")
             else:  # 50% chance to add a new story
                 new_story = f"New research finding at timestep {self.current_timestep}"
                 new_story_id = f"story_{len(self.stories)}"
@@ -816,6 +821,9 @@ for t in range(100):
         logger.info(f"Field energy: {field_energy:.2f}")
 
     logger.info(f"Number of active stories: {len(simulator.stories)}")
+
+
+
 
 
 
