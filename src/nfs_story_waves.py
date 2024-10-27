@@ -1,8 +1,8 @@
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import torch
 import torch.autograd
-from typing import List, Dict, Tuple
+from typing import List, Dict, Any
 from transformers import AutoTokenizer, AutoModel
 import logging
 
@@ -20,13 +20,50 @@ class NarrativeWave:
     phase: torch.Tensor  # Story's phase in narrative space
     coherence: torch.Tensor  # Measure of story stability
     entanglement: Dict[str, float]  # Connections to other stories
+    uncertainty: torch.Tensor = field(init=False)
 
     def __post_init__(self):
         assert self.embedding.dim() == 1, f"Embedding must be 1D, got shape {self.embedding.shape}"
         assert self.embedding.shape[0] == 768, f"Embedding must have 768 elements, got {self.embedding.shape[0]}"
-        self.amplitude = torch.tensor(self.amplitude, dtype=torch.float32).view(1)
-        self.phase = torch.tensor(self.phase, dtype=torch.float32).view(1)
-        self.coherence = torch.tensor(self.coherence, dtype=torch.float32).view(1)
+        self.amplitude = self.amplitude.clone().detach().view(1)
+        self.phase = self.phase.clone().detach().view(1)
+        self.coherence = self.coherence.clone().detach().view(1)
+        self.uncertainty = torch.tensor(np.random.random(), dtype=torch.float32).view(1)
+
+
+class PatternMemory:
+    def __init__(self):
+        self.patterns = []
+        self.pattern_strengths = torch.tensor([])
+        
+    def update_patterns(self, new_pattern, field_state):
+        """Track and evolve observed patterns"""
+        pattern_embedding = self.encode_pattern(new_pattern)
+        
+        if len(self.patterns) > 0:
+            similarities = torch.cosine_similarity(
+                pattern_embedding.unsqueeze(0),
+                torch.stack(self.patterns)
+            )
+            
+            if torch.any(similarities > 0.9):
+                idx = torch.argmax(similarities)
+                self.patterns[idx] = 0.9 * self.patterns[idx] + 0.1 * pattern_embedding
+            else:
+                self.patterns.append(pattern_embedding)
+        else:
+            self.patterns.append(pattern_embedding)
+        
+        # Update pattern strengths based on field state
+        self.pattern_strengths = torch.tensor([
+            torch.cosine_similarity(p.unsqueeze(0), field_state.unsqueeze(0))
+            for p in self.patterns
+        ])
+
+    def encode_pattern(self, pattern: Dict) -> torch.Tensor:
+        # Implement pattern encoding logic here
+        # This is a placeholder implementation
+        return torch.randn(768)  # Same dimension as story embeddings
 
 
 class NarrativeFieldSimulator:
@@ -37,6 +74,9 @@ class NarrativeFieldSimulator:
         self.quantum_dim = 768  # Embedding dimension
         self.stories: Dict[str, NarrativeWave] = {}
         self.field_state = torch.zeros(self.quantum_dim)
+        self.total_energy = 1.0  # System's total energy
+        self.energy_threshold = 2.0  # Maximum allowed energy
+        self.pattern_memory = PatternMemory()
 
     def create_wave_function(self, content: str) -> NarrativeWave:
         """Convert story to quantum wave function"""
@@ -48,19 +88,27 @@ class NarrativeFieldSimulator:
         # Initialize quantum properties
         return NarrativeWave(
             content=content,
-            embedding=embedding,  # Now guaranteed to be 1D
-            amplitude=torch.tensor([1.0]),
-            phase=torch.tensor([np.random.random() * 2 * np.pi]),
-            coherence=torch.tensor([1.0]),
+            embedding=embedding,
+            amplitude=torch.tensor([1.0], dtype=torch.float32),
+            phase=torch.tensor([np.random.random() * 2 * np.pi], dtype=torch.float32),
+            coherence=torch.tensor([1.0], dtype=torch.float32),
             entanglement={},
         )
 
     def quantum_interference(self, wave1: NarrativeWave, wave2: NarrativeWave) -> float:
-        """Calculate interference between two narrative waves"""
-        # Compute quantum interference using cosine similarity and phase
-        similarity = torch.cosine_similarity(wave1.embedding.unsqueeze(0), wave2.embedding.unsqueeze(0))
-        phase_factor = torch.cos(torch.tensor(wave1.phase - wave2.phase))
-        return float(similarity * phase_factor)
+        """Enhanced quantum interference with uncertainty"""
+        position_uncertainty = torch.std(wave1.embedding)
+        momentum_uncertainty = torch.std(wave2.embedding)
+        uncertainty_factor = 1.0 / (position_uncertainty * momentum_uncertainty)
+        
+        semantic_distance = torch.norm(wave1.embedding - wave2.embedding)
+        tunnel_probability = torch.exp(-semantic_distance)
+        
+        similarity = torch.cosine_similarity(wave1.embedding.unsqueeze(0), 
+                                           wave2.embedding.unsqueeze(0))
+        phase_factor = torch.cos(wave1.phase - wave2.phase)
+        
+        return float(similarity * phase_factor * uncertainty_factor * tunnel_probability)
 
     def apply_field_effects(self, wave: NarrativeWave, dt: float):
         """Apply quantum field effects to a narrative wave"""
@@ -73,6 +121,32 @@ class NarrativeFieldSimulator:
             wave.embedding.unsqueeze(0), self.field_state.unsqueeze(0)
         )
         wave.amplitude *= 1.0 + field_interaction * dt
+
+        # Apply environmental effects
+        env_embedding, vacuum_fluctuation = self.apply_environmental_effects(wave, dt)
+        wave.embedding = 0.9 * wave.embedding + 0.1 * env_embedding
+        self.field_state += vacuum_fluctuation
+
+    def apply_environmental_effects(self, wave: NarrativeWave, dt: float):
+        """Simulate interaction with environment"""
+        noise = torch.randn_like(wave.embedding) * 0.01
+        
+        environment_coupling = torch.tensor(0.1, dtype=torch.float32)
+        wave.coherence *= torch.exp(-environment_coupling * dt)
+        
+        vacuum_energy = 0.01
+        vacuum_fluctuation = torch.randn_like(self.field_state) * vacuum_energy
+        
+        return wave.embedding + noise, vacuum_fluctuation
+
+    def enforce_energy_conservation(self):
+        """Enforce energy conservation in the field"""
+        current_energy = torch.norm(self.field_state)
+        if current_energy > self.energy_threshold:
+            self.field_state = self.field_state * (self.total_energy / current_energy)
+            scale_factor = torch.sqrt(self.total_energy / current_energy)
+            for story in self.stories.values():
+                story.amplitude *= scale_factor
 
     def update_field_state(self):
         """Update the overall field state based on all stories with non-linear effects"""
@@ -129,6 +203,20 @@ class NarrativeFieldSimulator:
                 patterns.append(pattern)
                 logger.debug(f"Found pattern: {pattern}")
 
+        # Consider pattern memory in emergence detection
+        for i, pattern_embedding in enumerate(self.pattern_memory.patterns):
+            similarity = torch.cosine_similarity(
+                pattern_embedding.unsqueeze(0),
+                embeddings
+            )
+            if torch.any(similarity > threshold):
+                pattern = {
+                    "stories": [story_keys[j] for j in (similarity > threshold).nonzero().squeeze(1)],
+                    "coherence": float(similarity[similarity > threshold].mean()),
+                    "field_strength": float(self.pattern_memory.pattern_strengths[i]),
+                }
+                patterns.append(pattern)
+
         logger.debug(f"Detected {len(patterns)} patterns")
         return patterns
 
@@ -159,6 +247,14 @@ class NarrativeFieldSimulator:
 
         # Remove fully decohered stories
         self.stories = {k: v for k, v in self.stories.items() if v.coherence > 0.1}
+
+        # Enforce energy conservation
+        self.enforce_energy_conservation()
+
+        # Update pattern memory
+        patterns = self.detect_emergence()
+        for pattern in patterns:
+            self.pattern_memory.update_patterns(pattern, self.field_state)
 
 
 # Example usage
