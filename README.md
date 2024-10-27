@@ -2,13 +2,13 @@
 
 ## Project Overview
 
-Friction Flow is an advanced Python-based research project aimed at developing a framework for analyzing and simulating complex human behavior and group dynamics based on Narrative Field Dynamics. This project leverages AI and machine learning techniques, with a focus on integrating Large Language Models (LLMs) for natural language-based decision making and interactions.
+Friction Flow is an advanced Python-based research project aimed at developing a framework for analyzing and simulating complex human behavior and group interaction based on Narrative Field Dynamics. This project leverages AI and machine learning techniques, with a focus on integrating Large Language Models (LLMs) for natural language-based decision making and interactions.
 
 ## Key Features
 
 1. **Multi-Agent Systems**: Simulates emergent behavior in complex social systems.
 2. **Psychological Modeling**: Incorporates advanced models of individual and group psychology.
-3. **LLM Integration**: Utilizes state-of-the-art language models for natural language processing and generation.
+3. **LLM Integration**: Utilizes language models for natural language processing and generation.
 4. **Distributed Computing**: Employs event-driven architectures for scalable simulations.
 5. **Machine Learning Components**: Includes neural networks and other ML techniques for behavior prediction and analysis.
 
