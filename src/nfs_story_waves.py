@@ -290,18 +290,25 @@ class NarrativeFieldSimulator:
         )
 
     def apply_field_effects(self, wave: NarrativeWave, dt: float):
-        """Apply quantum field effects to a narrative wave"""
-        # Simulate quantum evolution
+        """Enhanced field effects with better damping"""
+        # Original evolution
         wave.phase += dt * wave.amplitude
-        wave.coherence *= torch.exp(torch.tensor(-dt / 10.0))  # Gradual decoherence
-
-        # Apply field interactions
+        
+        # Enhanced decoherence with amplitude-dependent damping
+        decoherence_rate = torch.tensor(-dt / 10.0) * (1.0 + 0.1 * wave.amplitude)
+        wave.coherence *= torch.exp(decoherence_rate)
+        
+        # Field interaction with damping
         field_interaction = torch.cosine_similarity(
-            wave.embedding.unsqueeze(0), self.field_state.unsqueeze(0)
+            wave.embedding.unsqueeze(0), 
+            self.field_state.unsqueeze(0)
         )
-        wave.amplitude *= 1.0 + field_interaction * dt
+        
+        # Damped amplitude evolution
+        damping_factor = torch.exp(-0.01 * wave.amplitude)  # Stronger damping for higher amplitudes
+        wave.amplitude *= (1.0 + field_interaction * dt) * damping_factor
 
-        # Apply environmental effects
+        # Apply environmental effects (keep this part from the original method)
         env_embedding, vacuum_fluctuation = self.apply_environmental_effects(wave, dt)
         wave.embedding = 0.9 * wave.embedding + 0.1 * env_embedding
         self.field_state += vacuum_fluctuation
@@ -319,13 +326,24 @@ class NarrativeFieldSimulator:
         return wave.embedding + colored_noise, vacuum_fluctuation
 
     def enforce_energy_conservation(self):
-        """Enforce energy conservation in the field"""
+        """More sophisticated energy conservation"""
         current_energy = torch.norm(self.field_state)
         if current_energy > self.energy_threshold:
-            self.field_state = self.field_state * (self.total_energy / current_energy)
-            scale_factor = torch.sqrt(self.total_energy / current_energy)
+            # Calculate excess energy
+            excess = current_energy - self.total_energy
+            
+            # Apply soft clamping using tanh
+            damping = torch.tanh(excess / self.energy_threshold)
+            scale_factor = (self.total_energy / current_energy) * (1.0 - damping)
+            
+            # Apply scaled correction
+            self.field_state = self.field_state * scale_factor
             for story in self.stories.values():
-                story.amplitude *= scale_factor
+                story.amplitude *= torch.sqrt(scale_factor)
+        
+        # Add small dissipation term
+        dissipation = 0.01
+        self.field_state *= (1.0 - dissipation)
 
     def update_field_state(self):
         """Update the overall field state based on all stories with non-linear effects"""
@@ -403,7 +421,8 @@ class NarrativeFieldSimulator:
         return patterns
 
     def calculate_pattern_interaction(self, pattern1: Dict, pattern2: Dict) -> Dict:
-        """Calculate interaction between patterns"""
+        """Enhanced pattern interaction with stability controls"""
+        # Calculate base interaction (using existing logic)
         distance = torch.norm(pattern1['center'] - pattern2['center'])
         overlap = torch.max(torch.zeros(1), 
                            (pattern1['radius'] + pattern2['radius'] - distance) / 
@@ -416,12 +435,25 @@ class NarrativeFieldSimulator:
             pattern2['center'].unsqueeze(0)
         )
         
-        return {
+        base_interaction = {
             'overlap': float(overlap),
             'phase_coherence': float(phase_coherence),
             'field_interaction': float(field_interaction),
             'interaction_strength': float(overlap * phase_coherence * field_interaction)
         }
+        
+        # Add stability terms
+        stability_factor = torch.exp(
+            -0.1 * (pattern1['field_strength'] + pattern2['field_strength'])
+        )
+        
+        # Modify interaction strength
+        base_interaction['interaction_strength'] *= float(stability_factor)
+        
+        # Add stability metrics
+        base_interaction['stability'] = float(stability_factor)
+        
+        return base_interaction
 
     def simulate_timestep(self, dt: float):
         """Simulate one timestep of field evolution"""
