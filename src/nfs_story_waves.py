@@ -101,6 +101,9 @@ class PatternMemory:
             self.pattern_strengths = torch.tensor([1.0])
         
         # Update temporal history
+        # Keep only the most recent patterns
+        if len(self.pattern_history) >= 1000:
+            self.pattern_history.pop(0)
         self.pattern_history.append({
             'time': pattern_time,
             'embedding': pattern_embedding,
