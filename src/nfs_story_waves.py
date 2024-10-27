@@ -233,11 +233,17 @@ class NarrativeFieldSimulator:
         )
 
         threshold = 0.8
+        processed_stories = set()
+
         for i in range(len(similarity_matrix)):
+            if story_keys[i] in processed_stories:
+                continue
+
             connected = (similarity_matrix[i] > threshold).nonzero().squeeze(1)
             if len(connected) > 2:
+                pattern_stories = [story_keys[j.item()] for j in connected if j.item() < len(story_keys)]
                 pattern = {
-                    "stories": [story_keys[j.item()] for j in connected if j.item() < len(story_keys)],
+                    "stories": pattern_stories,
                     "coherence": float(similarity_matrix[i, connected].mean()),
                     "field_strength": float(
                         self.stories[story_keys[i]].amplitude
@@ -245,6 +251,7 @@ class NarrativeFieldSimulator:
                 }
                 patterns.append(pattern)
                 logger.debug(f"Found pattern: {pattern}")
+                processed_stories.update(pattern_stories)
 
         # Consider pattern memory in emergence detection
         for i, pattern_embedding in enumerate(self.pattern_memory.patterns):
@@ -253,12 +260,16 @@ class NarrativeFieldSimulator:
                 embeddings
             )
             if torch.any(similarity > threshold):
-                pattern = {
-                    "stories": [story_keys[j] for j in (similarity > threshold).nonzero().squeeze(1)],
-                    "coherence": float(similarity[similarity > threshold].mean()),
-                    "field_strength": float(self.pattern_memory.pattern_strengths[i]),
-                }
-                patterns.append(pattern)
+                pattern_stories = [story_keys[j] for j in (similarity > threshold).nonzero().squeeze(1)]
+                new_stories = [story for story in pattern_stories if story not in processed_stories]
+                if new_stories:
+                    pattern = {
+                        "stories": new_stories,
+                        "coherence": float(similarity[similarity > threshold].mean()),
+                        "field_strength": float(self.pattern_memory.pattern_strengths[i]),
+                    }
+                    patterns.append(pattern)
+                    processed_stories.update(new_stories)
 
         logger.debug(f"Detected {len(patterns)} patterns")
         return patterns
