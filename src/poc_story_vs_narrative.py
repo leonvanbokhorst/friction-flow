@@ -117,18 +117,12 @@ async def main():
         story_elements["events"], embedded_story["events"]
     ):
         for category, modifiers in narrative_modifiers.items():
-            for modifier_name, modifier_embedding in embedded_narratives[
-                category
-            ].items():
-                logger.debug(
-                    f"Applying narrative modifier: {category} - {modifier_name}"
-                )
+            for modifier_name, modifier_embedding in embedded_narratives[category].items():
+                logger.debug(f"Applying narrative modifier: {category} - {modifier_name}")
                 modified_embedding = apply_narrative(
                     event_embedding, modifier_embedding, weight=0.6
                 )
-                similarity = cosine_similarity([event_embedding], [modified_embedding])[
-                    0
-                ][0]
+                similarity = cosine_similarity([event_embedding], [modified_embedding])[0][0]
 
                 # Generate modified text
                 modified_text = await generate_modified_text(
@@ -144,11 +138,11 @@ async def main():
     # Output the modified stories with similarity scores and modified text
     logger.info("Outputting modified stories")
     for (event_text, category, modifier_name), mod_data in modified_story.items():
-        print(f"Original Event: {event_text}")
-        print(f"Applied {category.capitalize()}: {modifier_name}")
-        print(f"Similarity to Original: {mod_data['similarity']:.4f}")
-        print(f"Modified Text: {mod_data['modified_text']}")
-        print()
+        logger.info(f"Original Event: {event_text}")
+        logger.info(f"Applied {category.capitalize()}: {modifier_name}")
+        logger.info(f"Similarity to Original: {mod_data['similarity']:.4f}")
+        logger.info(f"Modified Text: {mod_data['modified_text']}")
+        logger.info("")  # Empty line for readability
 
     # Clean up resources
     logger.info("Cleaning up resources")
