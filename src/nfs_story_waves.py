@@ -8,6 +8,7 @@ import logging
 import torch.nn.functional as F
 import torch.fft
 import random
+import pywt  # For wavelet analysis
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -244,6 +245,155 @@ class EnvironmentalCoupling:
         return colored_noise * self.temperature
 
 
+class FrequencyAnalyzer:
+    """Enhance frequency analysis capabilities"""
+    def __init__(self, window_size: int = 50):
+        self.window_size = window_size
+        self.frequency_history = []
+        
+    def analyze_frequencies(self, field_state: torch.Tensor, patterns: List[Dict]) -> Dict:
+        """Multi-scale frequency analysis"""
+        if not patterns:
+            return {'dominant_frequencies': [], 'frequency_powers': []}
+        
+        signal = torch.tensor([p['field_strength'] for p in patterns])
+        
+        # Convert to numpy array for pywt
+        np_signal = signal.numpy()
+        
+        # Determine appropriate decomposition level
+        max_level = pywt.dwt_max_level(len(np_signal), 'db4')
+        level = min(3, max_level)  # Use 3 or max_level, whichever is smaller
+        
+        if level == 0:
+            # Not enough data for decomposition
+            return {'dominant_frequencies': [1], 'frequency_powers': [float(np.mean(np_signal**2))]}
+        
+        # Wavelet decomposition
+        coeffs = pywt.wavedec(np_signal, 'db4', level=level)
+        
+        # Calculate power spectrum
+        power_spectrum = [float(np.mean(np.abs(c)**2)) for c in coeffs]
+        
+        # Identify dominant frequencies
+        dominant_scales = np.argsort(power_spectrum)[::-1]
+        
+        return {
+            'dominant_frequencies': [2**(level-i) for i in dominant_scales],
+            'frequency_powers': power_spectrum
+        }
+
+
+class StoryInteractionAnalyzer:
+    """Enhanced story interaction analysis"""
+    def __init__(self):
+        self.interaction_history = []
+        
+    def analyze_interactions(self, stories: Dict[str, NarrativeWave]) -> Dict:
+        """Analyze story interaction patterns"""
+        story_ids = list(stories.keys())
+        n_stories = len(story_ids)
+        
+        if n_stories < 2:
+            return {}
+            
+        # Create interaction matrix
+        interaction_matrix = torch.zeros((n_stories, n_stories))
+        
+        for i in range(n_stories):
+            for j in range(i+1, n_stories):
+                story1 = stories[story_ids[i]]
+                story2 = stories[story_ids[j]]
+                
+                semantic_similarity = torch.cosine_similarity(
+                    story1.embedding.unsqueeze(0),
+                    story2.embedding.unsqueeze(0)
+                )
+                
+                phase_coupling = torch.cos(story1.phase - story2.phase)
+                amplitude_ratio = torch.min(story1.amplitude, story2.amplitude) / \
+                                  torch.max(story1.amplitude, story2.amplitude)
+                
+                interaction_strength = (
+                    semantic_similarity * 
+                    phase_coupling * 
+                    amplitude_ratio
+                ).item()
+                
+                interaction_matrix[i, j] = interaction_matrix[j, i] = interaction_strength
+        
+        # Analyze interaction structure
+        eigenvalues, eigenvectors = torch.linalg.eigh(interaction_matrix)
+        
+        # Find interaction clusters
+        clusters = []
+        threshold = 0.7
+        for i, vec in enumerate(eigenvectors.T):
+            if eigenvalues[i] > threshold:
+                cluster_members = [
+                    story_ids[j] for j in range(n_stories) 
+                    if abs(vec[j]) > 0.3
+                ]
+                if cluster_members:
+                    clusters.append({
+                        'strength': float(eigenvalues[i]),
+                        'members': cluster_members
+                    })
+        
+        return {
+            'interaction_matrix': interaction_matrix.tolist(),
+            'eigenvalues': eigenvalues.tolist(),
+            'clusters': clusters
+        }
+
+
+class NarrativeFieldMetrics:
+    """Track and analyze field metrics"""
+    def __init__(self):
+        self.metrics_history = []
+        
+    def update(self, field_state: torch.Tensor, stories: Dict[str, NarrativeWave], 
+               patterns: List[Dict]) -> Dict:
+        """Calculate comprehensive field metrics"""
+        # Calculate field complexity (entropy)
+        if field_state.dim() == 1:
+            field_state = field_state.unsqueeze(0)  # Add a dimension if 1D
+        
+        normalized_field = torch.nn.functional.normalize(field_state.abs(), dim=-1)
+        field_entropy = -torch.sum(normalized_field * torch.log(normalized_field + 1e-10))
+        
+        # Calculate story diversity
+        if stories:
+            embeddings = torch.stack([s.embedding for s in stories.values()])
+            similarity_matrix = torch.cosine_similarity(
+                embeddings.unsqueeze(1),
+                embeddings.unsqueeze(0)
+            )
+            story_diversity = 1.0 - similarity_matrix.mean()
+        else:
+            story_diversity = 0.0
+        
+        # Calculate pattern stability
+        if patterns:
+            pattern_strengths = torch.tensor([p['field_strength'] for p in patterns])
+            pattern_stability = 1.0 / (1.0 + torch.std(pattern_strengths))
+            if torch.isnan(pattern_stability):
+                pattern_stability = 0.0
+        else:
+            pattern_stability = 0.0
+            
+        metrics = {
+            'field_entropy': float(field_entropy),
+            'story_diversity': float(story_diversity),
+            'pattern_stability': float(pattern_stability),
+            'active_stories': len(stories),
+            'active_patterns': len(patterns)
+        }
+        
+        self.metrics_history.append(metrics)
+        return metrics
+
+
 class NarrativeFieldSimulator:
     def __init__(self):
         # Initialize quantum semantic space
@@ -259,6 +409,9 @@ class NarrativeFieldSimulator:
         self.phase_space_tracker = PhaseSpaceTracker(self.quantum_dim)
         self.environmental_coupling = EnvironmentalCoupling()
         self.current_timestep = 0
+        self.frequency_analyzer = FrequencyAnalyzer()
+        self.interaction_analyzer = StoryInteractionAnalyzer()
+        self.field_metrics = NarrativeFieldMetrics()
 
     def create_wave_function(self, content: str, story_id: str) -> NarrativeWave:
         """Convert story to quantum wave function and add to stories dict"""
@@ -494,7 +647,7 @@ class NarrativeFieldSimulator:
         }
         
         stability_factor = torch.exp(
-            -0.1 * (pattern1['field_strength'] + pattern2['field_strength'])
+            torch.tensor(-0.1 * (pattern1['field_strength'] + pattern2['field_strength']))
         ).clamp(min=0.1, max=1.0)
         
         base_interaction['interaction_strength'] *= float(stability_factor)
@@ -605,6 +758,19 @@ class NarrativeFieldSimulator:
         self.field_state = torch.where(torch.isfinite(self.field_state), self.field_state, torch.rand_like(self.field_state) * 1e-6)
         self.field_state = self.field_state.clamp(min=-10, max=10)
 
+        # Frequency analysis
+        frequency_data = self.frequency_analyzer.analyze_frequencies(self.field_state, patterns)
+        logger.info(f"Dominant frequencies: {frequency_data['dominant_frequencies']}")
+
+        # Interaction analysis
+        interaction_data = self.interaction_analyzer.analyze_interactions(self.stories)
+        if interaction_data:
+            logger.info(f"Detected {len(interaction_data['clusters'])} interaction clusters")
+
+        # Comprehensive metrics
+        metrics = self.field_metrics.update(self.field_state, self.stories, patterns)
+        logger.info(f"Field metrics: {metrics}")
+
 
 # Example usage
 simulator = NarrativeFieldSimulator()
@@ -650,6 +816,14 @@ for t in range(100):
         logger.info(f"Field energy: {field_energy:.2f}")
 
     logger.info(f"Number of active stories: {len(simulator.stories)}")
+
+
+
+
+
+
+
+
 
 
 
