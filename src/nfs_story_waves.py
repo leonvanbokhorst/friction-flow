@@ -2,7 +2,7 @@ import numpy as np
 from dataclasses import dataclass, field
 import torch
 import torch.autograd
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Tuple
 from transformers import AutoTokenizer, AutoModel
 import logging
 import torch.nn.functional as F
@@ -288,14 +288,16 @@ class PhaseSpaceTracker:
                 'strength_stability': 0.0,
                 'dominant_frequency': 0.0
             }
-            
+
         recent_states = self.trajectory[-10:]
-        
+
         field_variance = torch.var(torch.stack([s['field'] for s in recent_states]))
-        
-        # Handle case where pattern_strength might be empty
-        strength_tensors = [s['pattern_strength'] for s in recent_states if s['pattern_strength'].numel() > 0]
-        if strength_tensors:
+
+        if strength_tensors := [
+            s['pattern_strength']
+            for s in recent_states
+            if s['pattern_strength'].numel() > 0
+        ]:
             strength_variance = torch.var(torch.cat(strength_tensors))
             strength_series = torch.cat(strength_tensors)
             if strength_series.numel() > 1:
@@ -307,11 +309,11 @@ class PhaseSpaceTracker:
         else:
             strength_variance = torch.tensor(0.0)
             dominant_frequency = 0.0
-        
+
         # Avoid division by zero
         field_stability = float(1.0 / (1.0 + field_variance)) if field_variance != 0 else 1.0
         strength_stability = float(1.0 / (1.0 + strength_variance)) if strength_variance != 0 else 1.0
-        
+
         return {
             'field_stability': field_stability,
             'strength_stability': strength_stability,
@@ -447,35 +449,35 @@ class StoryInteractionAnalyzer:
         """
         story_ids = list(stories.keys())
         n_stories = len(story_ids)
-        
+
         if n_stories < 2:
             return {}
-            
+
         # Create interaction matrix
         interaction_matrix = torch.zeros((n_stories, n_stories))
-        
+
         for i in range(n_stories):
             for j in range(i+1, n_stories):
                 story1 = stories[story_ids[i]]
                 story2 = stories[story_ids[j]]
-                
+
                 semantic_similarity = torch.cosine_similarity(
                     story1.embedding.unsqueeze(0),
                     story2.embedding.unsqueeze(0)
                 )
-                
+
                 phase_coupling = torch.cos(story1.phase - story2.phase)
                 amplitude_ratio = torch.min(story1.amplitude, story2.amplitude) / \
-                                  torch.max(story1.amplitude, story2.amplitude)
-                
+                                      torch.max(story1.amplitude, story2.amplitude)
+
                 interaction_strength = (
                     semantic_similarity * 
                     phase_coupling * 
                     amplitude_ratio
                 ).item()
-                
+
                 interaction_matrix[i, j] = interaction_matrix[j, i] = interaction_strength
-        
+
         try:
             eigenvalues, eigenvectors = torch.linalg.eigh(interaction_matrix)
         except torch._C._LinAlgError:
@@ -488,16 +490,14 @@ class StoryInteractionAnalyzer:
         threshold = 0.7
         for i, vec in enumerate(eigenvectors.T):
             if eigenvalues[i] > threshold:
-                cluster_members = [
-                    story_ids[j] for j in range(n_stories) 
-                    if abs(vec[j]) > 0.3
-                ]
-                if cluster_members:
+                if cluster_members := [
+                    story_ids[j] for j in range(n_stories) if abs(vec[j]) > 0.3
+                ]:
                     clusters.append({
                         'strength': float(eigenvalues[i]),
                         'members': cluster_members
                     })
-        
+
         return {
             'interaction_matrix': interaction_matrix.tolist(),
             'eigenvalues': eigenvalues.tolist(),
@@ -819,7 +819,7 @@ class NarrativeFieldSimulator:
         else:
             self.field_state = torch.rand_like(self.field_state) * 1e-6
 
-    def detect_emergence(self) -> List[Dict]:
+    def detect_emergence(self) -> List[Dict]:  # sourcery skip: low-code-quality
         """
         Enhanced pattern detection with better uniqueness handling.
         
@@ -1009,19 +1009,7 @@ class NarrativeFieldSimulator:
 
         # Analyze attractor properties periodically
         if len(self.phase_space_tracker.trajectory) % 100 == 0:
-            attractor_properties = self.phase_space_tracker.analyze_attractor()
-            field_energy = torch.norm(self.field_state)
-            
-            if torch.isnan(field_energy):
-                logger.warning("NaN detected in field energy calculation.")
-            
-            logger.info(f"Attractor properties: {attractor_properties}")
-            logger.info(f"Current field energy: {field_energy:.4f}")
-            logger.info(f"Number of active stories: {len(self.stories)}")
-            if self.stories:
-                avg_coherence = sum(story.coherence.item() for story in self.stories.values()) / len(self.stories)
-                logger.info(f"Average story coherence: {avg_coherence:.4f}")
-
+            self._extracted_from_simulate_timestep_83()
         # Log the number of active stories at the end of the timestep
         logger.info(f"Number of active stories at end of timestep: {len(self.stories)}")
 
@@ -1030,7 +1018,7 @@ class NarrativeFieldSimulator:
             story.amplitude = story.amplitude.clamp(min=0.1, max=10.0)
             story.coherence = story.coherence.clamp(min=0.1, max=1.0)
             story.embedding = torch.where(torch.isfinite(story.embedding), story.embedding, torch.rand_like(story.embedding) * 1e-6)
-        
+
         self.field_state = torch.where(torch.isfinite(self.field_state), self.field_state, torch.rand_like(self.field_state) * 1e-6)
         self.field_state = self.field_state.clamp(min=-10, max=10)
 
@@ -1038,14 +1026,29 @@ class NarrativeFieldSimulator:
         frequency_data = self.frequency_analyzer.analyze_frequencies(self.field_state, patterns)
         logger.info(f"Dominant frequencies: {frequency_data['dominant_frequencies']}")
 
-        # Interaction analysis
-        interaction_data = self.interaction_analyzer.analyze_interactions(self.stories)
-        if interaction_data:
+        if interaction_data := self.interaction_analyzer.analyze_interactions(
+            self.stories
+        ):
             logger.info(f"Detected {len(interaction_data['clusters'])} interaction clusters")
 
         # Comprehensive metrics
         metrics = self.field_metrics.update(self.field_state, self.stories, patterns)
         logger.info(f"Field metrics: {metrics}")
+
+    # TODO Rename this here and in `simulate_timestep`
+    def _extracted_from_simulate_timestep_83(self):
+        attractor_properties = self.phase_space_tracker.analyze_attractor()
+        field_energy = torch.norm(self.field_state)
+
+        if torch.isnan(field_energy):
+            logger.warning("NaN detected in field energy calculation.")
+
+        logger.info(f"Attractor properties: {attractor_properties}")
+        logger.info(f"Current field energy: {field_energy:.4f}")
+        logger.info(f"Number of active stories: {len(self.stories)}")
+        if self.stories:
+            avg_coherence = sum(story.coherence.item() for story in self.stories.values()) / len(self.stories)
+            logger.info(f"Average story coherence: {avg_coherence:.4f}")
 
 
 # Example usage

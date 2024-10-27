@@ -1,6 +1,18 @@
 """
 Narrative Field System
-A framework for analyzing and tracking narrative dynamics in complex social systems.
+
+This module implements a framework for analyzing and tracking narrative dynamics in complex social systems.
+It uses language models and vector stores to process stories, detect patterns, and analyze the impact of narratives
+on a simulated social environment.
+
+Key components:
+- Story: Represents individual narratives within the system
+- FieldState: Represents the current state of the narrative field
+- VectorStore: Abstract base class for storing and retrieving story embeddings
+- FieldAnalyzer: Analyzes the impact of stories on the field state
+- ResonanceDetector: Finds similarities between stories
+- NarrativeField: Main class that orchestrates the entire system
+- PerformanceMetrics and PerformanceMonitor: Track and report on system performance
 """
 
 from __future__ import annotations
@@ -35,20 +47,56 @@ DEFAULT_RESONANCE_LIMIT: Final[int] = 3
 
 
 class VectorStore(ABC):
+    """
+    Abstract base class for vector storage and retrieval operations.
+    Implementations of this class should provide methods for storing story embeddings
+    and finding similar stories based on their embeddings.
+    """
+
     @abstractmethod
     async def store(self, story: Story, embedding: List[float]) -> None:
+        """
+        Store a story and its embedding in the vector store.
+
+        Args:
+            story (Story): The story object to store.
+            embedding (List[float]): The embedding vector of the story.
+        """
         pass
 
     @abstractmethod
     async def find_similar(
         self, embedding: List[float], threshold: float, limit: int
     ) -> List[Dict]:
+        """
+        Find similar stories based on the given embedding.
+
+        Args:
+            embedding (List[float]): The query embedding vector.
+            threshold (float): The similarity threshold for matching.
+            limit (int): The maximum number of similar stories to return.
+
+        Returns:
+            List[Dict]: A list of dictionaries containing similar stories and their metadata.
+        """
         pass
 
 
-# Data Classes
 @dataclass
 class Story:
+    """
+    Represents a single narrative or story within the system.
+
+    Attributes:
+        content (str): The main text content of the story.
+        context (str): Additional context or metadata for the story.
+        id (StoryID): Unique identifier for the story.
+        timestamp (datetime): When the story was created or added to the system.
+        metadata (Optional[Dict[str, Any]]): Additional metadata for the story.
+        resonances (List[str]): IDs of other stories that resonate with this one.
+        field_effects (List[Dict]): Analyses of how this story affects the narrative field.
+    """
+
     content: str
     context: str
     id: StoryID = field(default_factory=lambda: StoryID(str(uuid4())))
@@ -60,6 +108,17 @@ class Story:
 
 @dataclass
 class FieldState:
+    """
+    Represents the current state of the narrative field.
+
+    Attributes:
+        description (str): A textual description of the current field state.
+        patterns (List[Dict[str, Any]]): Detected patterns in the narrative field.
+        active_resonances (List[Dict[str, Any]]): Currently active resonances between stories.
+        emergence_points (List[Dict[str, Any]]): Points where new narratives or patterns emerge.
+        timestamp (datetime): When this field state was last updated.
+    """
+
     description: str
     patterns: List[Dict[str, Any]] = field(default_factory=list)
     active_resonances: List[Dict[str, Any]] = field(default_factory=list)
@@ -67,10 +126,24 @@ class FieldState:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
-# Prompt Management
 class FieldAnalysisPrompts:
+    """
+    A collection of static methods that generate prompts for various field analysis tasks.
+    These prompts are used to guide the language model in analyzing the narrative field.
+    """
+
     @staticmethod
     def get_impact_analysis_prompt(story: Story, current_state: FieldState) -> str:
+        """
+        Generate a prompt for analyzing the impact of a new story on the current field state.
+
+        Args:
+            story (Story): The new story to analyze.
+            current_state (FieldState): The current state of the narrative field.
+
+        Returns:
+            str: A formatted prompt for impact analysis.
+        """
         return f"""Analyze how this new narrative affects the existing field state.
 
 Current Field State:
@@ -102,6 +175,16 @@ Provide a natural, story-focused analysis that emphasizes human impact."""
     def get_pattern_detection_prompt(
         stories: List[Story], current_state: FieldState
     ) -> str:
+        """
+        Generate a prompt for detecting patterns across recent stories.
+
+        Args:
+            stories (List[Story]): A list of recent stories to analyze.
+            current_state (FieldState): The current state of the narrative field.
+
+        Returns:
+            str: A formatted prompt for pattern detection.
+        """
         story_summaries = "\n".join(f"- {s.content}" for s in stories[-5:])
         return f"""Analyze patterns and themes across these recent narratives.
 
@@ -131,6 +214,16 @@ Describe patterns naturally, focusing on people and relationships."""
 
     @staticmethod
     def get_resonance_analysis_prompt(story1: Story, story2: Story) -> str:
+        """
+        Generate a prompt for analyzing the resonance between two stories.
+
+        Args:
+            story1 (Story): The first story to compare.
+            story2 (Story): The second story to compare.
+
+        Returns:
+            str: A formatted prompt for resonance analysis.
+        """
         return f"""Analyze how these two narratives connect and influence each other.
 
 First Narrative:
@@ -161,11 +254,25 @@ Describe connections naturally, focusing on meaning and impact."""
 
 
 class PerformanceMetrics:
+    """
+    Tracks and reports performance metrics for various operations in the system.
+
+    This class provides methods to start and stop timers, calculate average durations,
+    and log system resource usage.
+    """
+
     def __init__(self):
+        """Initialize the PerformanceMetrics object with empty metrics and a logger."""
         self.metrics: Dict[str, Dict[str, Any]] = {}
         self.logger = logging.getLogger(__name__)
 
     def start_timer(self, operation: str):
+        """
+        Start a timer for a specific operation.
+
+        Args:
+            operation (str): The name of the operation to time.
+        """
         if operation not in self.metrics:
             self.metrics[operation] = {
                 "start_time": time.perf_counter(),
@@ -175,6 +282,15 @@ class PerformanceMetrics:
             self.metrics[operation]["start_time"] = time.perf_counter()
 
     def stop_timer(self, operation: str) -> float:
+        """
+        Stop the timer for a specific operation and record its duration.
+
+        Args:
+            operation (str): The name of the operation to stop timing.
+
+        Returns:
+            float: The duration of the operation in seconds.
+        """
         if operation in self.metrics:
             duration = time.perf_counter() - self.metrics[operation]["start_time"]
             self.metrics[operation]["durations"].append(duration)
@@ -182,6 +298,15 @@ class PerformanceMetrics:
         return 0.0
 
     def get_average_duration(self, operation: str) -> float:
+        """
+        Calculate the average duration of a specific operation.
+
+        Args:
+            operation (str): The name of the operation to calculate the average for.
+
+        Returns:
+            float: The average duration of the operation in seconds.
+        """
         if operation in self.metrics and self.metrics[operation]["durations"]:
             return sum(self.metrics[operation]["durations"]) / len(
                 self.metrics[operation]["durations"]
@@ -189,6 +314,7 @@ class PerformanceMetrics:
         return 0.0
 
     def print_summary(self):
+        """Print a summary of all recorded performance metrics."""
         print("\nPerformance Metrics Summary:")
         for operation, data in self.metrics.items():
             if durations := data["durations"]:
@@ -204,6 +330,7 @@ class PerformanceMetrics:
                 print(f"{operation}: No data")
 
     def log_system_resources(self):
+        """Log current CPU and memory usage."""
         cpu_percent = psutil.cpu_percent()
         memory_info = psutil.virtual_memory()
         self.logger.info(f"CPU Usage: {cpu_percent}%")
@@ -211,12 +338,29 @@ class PerformanceMetrics:
 
 
 class PerformanceMonitor:
+    """
+    Monitors and reports on the performance of language model operations.
+
+    This class provides methods to track generation time and memory usage for LLM operations.
+    """
+
     def __init__(self):
+        """Initialize the PerformanceMonitor with an empty list of metrics."""
         self.metrics = []
 
     async def monitor_generation(
         self, llm: LanguageModel, prompt: str
     ) -> Tuple[str, Dict[str, float]]:
+        """
+        Monitor the performance of a language model generation task.
+
+        Args:
+            llm (LanguageModel): The language model interface to use.
+            prompt (str): The prompt to generate a response for.
+
+        Returns:
+            Tuple[str, Dict[str, float]]: The generated response and a dictionary of performance metrics.
+        """
         start_time = time.perf_counter()
         memory_before = psutil.virtual_memory().used
 
@@ -234,6 +378,12 @@ class PerformanceMonitor:
         return response, metrics
 
     def get_performance_report(self) -> Dict[str, float]:
+        """
+        Generate a report of average performance metrics.
+
+        Returns:
+            Dict[str, float]: A dictionary containing average generation time and memory usage change.
+        """
         if not self.metrics:
             return {"avg_generation_time": 0, "avg_memory_usage_change": 0}
 
@@ -249,17 +399,50 @@ class PerformanceMonitor:
 
 @dataclass
 class BatchMetrics:
+    """
+    Stores metrics for batch processing operations.
+
+    Attributes:
+        batch_sizes (List[int]): List of batch sizes processed.
+        batch_times (List[float]): List of processing times for each batch.
+        memory_usage (List[float]): List of memory usage for each batch.
+    """
+
     batch_sizes: List[int] = field(default_factory=list)
     batch_times: List[float] = field(default_factory=list)
     memory_usage: List[float] = field(default_factory=list)
 
 
 class BatchProcessor:
+    """
+    Handles batch processing of prompts using a language model.
+
+    This class optimizes batch sizes based on memory usage and processes prompts in batches.
+    """
+
     def __init__(self, llm: LanguageModel):
+        """
+        Initialize the BatchProcessor.
+
+        Args:
+            llm (LanguageModel): The language model interface to use for processing.
+        """
         self.llm = llm
         self.optimal_batch_size = 4  # Will be adjusted dynamically
 
     async def process_batch(self, prompts: List[str]) -> List[str]:
+        """
+        Process a batch of prompts using the language model.
+
+        This method dynamically adjusts the batch size based on memory usage and
+        processes the prompts in optimal batches.
+
+        Args:
+            prompts (List[str]): List of prompts to process.
+
+        Returns:
+            List[str]: List of generated responses for each prompt.
+        """
         # Dynamic batch size adjustment based on memory usage
         memory_usage = psutil.Process().memory_info().rss / 1024 / 1024
         if memory_usage > 0.8 * psutil.virtual_memory().total / 1024 / 1024:
@@ -277,7 +460,20 @@ class BatchProcessor:
 
 
 class ChromaStore(VectorStore):
+    """
+    Implementation of VectorStore using Chroma DB for storing and retrieving story embeddings.
+
+    This class provides methods to store story embeddings and find similar stories based on
+    cosine similarity of their embeddings.
+    """
+
     def __init__(self, collection_name: str = "narrative_field"):
+        """
+        Initialize the ChromaStore.
+
+        Args:
+            collection_name (str): Name of the Chroma DB collection to use.
+        """
         self.client = chromadb.Client(Settings(anonymized_telemetry=False))
         self.logger = logging.getLogger(__name__)
 
@@ -289,6 +485,13 @@ class ChromaStore(VectorStore):
             )
 
     async def store(self, story: Story, embedding: List[float]) -> None:
+        """
+        Store a story and its embedding in the Chroma DB.
+
+        Args:
+            story (Story): The story object to store.
+            embedding (List[float]): The embedding vector of the story.
+        """
         metadata = {
             "content": story.content,
             "context": story.context,
@@ -320,6 +523,17 @@ class ChromaStore(VectorStore):
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         limit: int = DEFAULT_RESONANCE_LIMIT,
     ) -> List[Dict]:
+        """
+        Find similar stories based on the given embedding.
+
+        Args:
+            embedding (List[float]): The query embedding vector.
+            threshold (float): The similarity threshold for matching.
+            limit (int): The maximum number of similar stories to return.
+
+        Returns:
+            List[Dict]: A list of dictionaries containing similar stories and their metadata.
+        """
         count = self.collection.count()
         if count == 0:
             return []
@@ -345,7 +559,19 @@ class ChromaStore(VectorStore):
 
 
 class FieldAnalyzer:
+    """
+    Analyzes the impact of stories on the narrative field and detects patterns.
+
+    This class uses a language model to generate analyses based on prompts.
+    """
+
     def __init__(self, llm_interface: LanguageModel):
+        """
+        Initialize the FieldAnalyzer.
+
+        Args:
+            llm_interface (LanguageModel): The language model interface to use for analysis.
+        """
         self.llm = llm_interface
         self.logger = logging.getLogger(__name__)
         self.prompts = FieldAnalysisPrompts()
@@ -353,6 +579,16 @@ class FieldAnalyzer:
     async def analyze_impact(
         self, story: Story, current_state: FieldState
     ) -> Dict[str, Any]:
+        """
+        Analyze the impact of a new story on the current field state.
+
+        Args:
+            story (Story): The new story to analyze.
+            current_state (FieldState): The current state of the narrative field.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the analysis, timestamp, and story ID.
+        """
         prompt = self.prompts.get_impact_analysis_prompt(story, current_state)
         analysis = await self.llm.generate(prompt)
 
@@ -361,12 +597,36 @@ class FieldAnalyzer:
     async def detect_patterns(
         self, stories: List[Story], current_state: FieldState
     ) -> str:
+        """
+        Detect patterns across a list of stories in the context of the current field state.
+
+        Args:
+            stories (List[Story]): The list of stories to analyze for patterns.
+            current_state (FieldState): The current state of the narrative field.
+
+        Returns:
+            str: A string describing the detected patterns.
+        """
         prompt = self.prompts.get_pattern_detection_prompt(stories, current_state)
         return await self.llm.generate(prompt)
 
 
 class ResonanceDetector:
+    """
+    Detects resonances between stories in the narrative field.
+
+    This class uses a vector store to find similar stories and a language model
+    to analyze the nature of the resonance between stories.
+    """
+
     def __init__(self, vector_store: VectorStore, llm_interface: LanguageModel):
+        """
+        Initialize the ResonanceDetector.
+
+        Args:
+            vector_store (VectorStore): The vector store to use for finding similar stories.
+            llm_interface (LanguageModel): The language model interface to use for analysis.
+        """
         self.vector_store = vector_store
         self.llm = llm_interface
         self.logger = logging.getLogger(__name__)
@@ -378,6 +638,17 @@ class ResonanceDetector:
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         limit: int = DEFAULT_RESONANCE_LIMIT,
     ) -> List[Dict[str, Any]]:
+        """
+        Find resonances between a given story and other stories in the vector store.
+
+        Args:
+            story (Story): The story to find resonances for.
+            threshold (float): The similarity threshold for considering a resonance.
+            limit (int): The maximum number of resonances to return.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries describing the resonances found.
+        """
         try:
             self.logger.debug(f"Generating embedding for story: {story.id}")
             # Ensure embedding is generated before using it
@@ -417,6 +688,16 @@ class ResonanceDetector:
     async def determine_resonance_type(
         self, story1: Story, story2: Story
     ) -> Dict[str, Any]:
+        """
+        Determine the type and nature of resonance between two stories.
+
+        Args:
+            story1 (Story): The first story in the resonance pair.
+            story2 (Story): The second story in the resonance pair.
+
+        Returns:
+            Dict[str, Any]: A dictionary describing the resonance between the stories.
+        """
         prompt = self.prompts.get_resonance_analysis_prompt(story1, story2)
         analysis = await self.llm.generate(prompt)
 
@@ -440,7 +721,21 @@ class ResonanceDetector:
 
 
 class NarrativeField:
+    """
+    Main class that orchestrates the entire Narrative Field System.
+
+    This class manages the addition of new stories, updates to the field state,
+    and coordinates the analysis and resonance detection processes.
+    """
+
     def __init__(self, llm_interface: LanguageModel, vector_store: VectorStore):
+        """
+        Initialize the NarrativeField.
+
+        Args:
+            llm_interface (LanguageModel): The language model interface to use for analysis.
+            vector_store (VectorStore): The vector store to use for story storage and retrieval.
+        """
         self._analyzer = FieldAnalyzer(llm_interface)
         self._resonance_detector = ResonanceDetector(vector_store, llm_interface)
         self._vector_store = vector_store
@@ -451,13 +746,28 @@ class NarrativeField:
 
     @property
     def state(self) -> FieldState:
+        """Get the current state of the narrative field."""
         return self._state
 
     @property
     def stories(self) -> Dict[StoryID, Story]:
+        """Get a copy of all stories in the narrative field."""
         return self._stories.copy()
 
     async def add_story(self, content: str, context: str) -> Story:
+        """
+        Add a new story to the narrative field and analyze its impact.
+
+        This method creates a new story, analyzes its impact on the field,
+        finds resonances with other stories, and updates the field state.
+
+        Args:
+            content (str): The main content of the story.
+            context (str): The context or additional information about the story.
+
+        Returns:
+            Story: The newly created and analyzed story object.
+        """
         self._performance_metrics.start_timer("add_story")
 
         self._performance_metrics.start_timer("create_story")
@@ -495,6 +805,12 @@ class NarrativeField:
         return story
 
     async def _store_story(self, story: Story) -> None:
+        """
+        Store a story in the vector store and local dictionary.
+
+        Args:
+            story (Story): The story to store.
+        """
         embedding = await self._resonance_detector.llm.generate_embedding(
             f"{story.content} {story.context}"
         )
@@ -504,6 +820,14 @@ class NarrativeField:
     async def _update_field_state(
         self, story: Story, impact: Dict, resonances: List[Dict]
     ) -> None:
+        """
+        Update the field state based on a new story, its impact, and resonances.
+
+        Args:
+            story (Story): The new story added to the field.
+            impact (Dict): The impact analysis of the story.
+            resonances (List[Dict]): The resonances found for the story.
+        """
         patterns = await self._analyzer.detect_patterns(
             list(self._stories.values()), self.state
         )
@@ -527,6 +851,11 @@ class NarrativeField:
 
 # Global cleanup function
 def global_cleanup():
+    """
+    Perform global cleanup operations.
+
+    This function is called at program exit to free up resources and clear caches.
+    """
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -537,6 +866,12 @@ atexit.register(global_cleanup)
 
 
 async def demo_scenario():
+    """
+    Run a demonstration scenario of the Narrative Field System.
+
+    This function sets up the system, processes a series of stories,
+    and logs performance metrics throughout the process.
+    """
     logger = logging.getLogger(__name__)
     logger.info("Starting narrative field demonstration...")
 
@@ -566,7 +901,7 @@ async def demo_scenario():
             },
             # Event 2: Robbert's tough advice
             {
-                "content": "After work, Robbert and Leon walked back to the lab together. Leon expressed his worries about Danny's accident and the AI minor. However, Robbert seemed more preoccupied with his own research and was not interested in discussing the minor. \"I know you're concerned, but you need to man up and stop whining,\" Robbert said bluntly. His tough advice left Leon feeling isolated and unsupported.",
+                "content": "After work, Robbert and Leon walked back to the lab together. Leon expressed his worries about Danny's accident and the AI minor. However, Robbert seemed more preoccupied with his own research and was not interested in discussing the minor. \"I know you're concerned, but you need to man up and stop whining,\" Robbert said bluntly. His tough advice left Leon feeling isolated.",
                 "context": "Robbert dismisses Leon's concerns, focusing instead on his own research priorities.",
             },
             # Event 4: Sarah's contribution
