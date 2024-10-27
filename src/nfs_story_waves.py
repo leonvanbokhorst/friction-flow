@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Set
 from transformers import AutoTokenizer, AutoModel
 import logging
 import torch.nn.functional as F
+import torch.fft
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -163,6 +164,67 @@ class PatternEvolution:
                                    pattern2["center"].unsqueeze(0)).item()
 
 
+class PhaseSpaceTracker:
+    """Track system evolution in phase space"""
+    def __init__(self, dim: int):
+        self.trajectory = []
+        self.phase_space_dim = dim
+        
+    def record_state(self, field_state: torch.Tensor, patterns: List[Dict]):
+        """Record current state in phase space"""
+        state_vector = {
+            'field': field_state.clone(),
+            'pattern_coherence': torch.tensor([p['coherence'] for p in patterns]),
+            'pattern_strength': torch.tensor([p['field_strength'] for p in patterns]),
+            'pattern_radius': torch.tensor([p['radius'] for p in patterns])
+        }
+        self.trajectory.append(state_vector)
+        
+    def analyze_attractor(self) -> Dict:
+        """Analyze attractor properties in phase space"""
+        if len(self.trajectory) < 10:
+            return {}
+            
+        recent_states = self.trajectory[-10:]
+        
+        field_variance = torch.var(torch.stack([s['field'] for s in recent_states]))
+        strength_variance = torch.var(torch.stack([s['pattern_strength'] for s in recent_states]))
+        
+        strength_series = torch.stack([s['pattern_strength'] for s in recent_states])
+        fft = torch.fft.fft(strength_series)
+        frequencies = torch.fft.fftfreq(len(strength_series))
+        
+        return {
+            'field_stability': float(1.0 / (1.0 + field_variance)),
+            'strength_stability': float(1.0 / (1.0 + strength_variance)),
+            'dominant_frequency': float(frequencies[torch.argmax(torch.abs(fft))])
+        }
+
+
+class EnvironmentalCoupling:
+    """Handle system-environment interactions"""
+    def __init__(self, temperature: float = 0.1):
+        self.temperature = torch.tensor(temperature, dtype=torch.float32)
+        self.noise_history = []
+        self.correlation_time = torch.tensor(10, dtype=torch.float32)
+        
+    def generate_colored_noise(self, shape: tuple) -> torch.Tensor:
+        """Generate temporally correlated noise"""
+        white_noise = torch.randn(shape)
+        if not self.noise_history:
+            self.noise_history = [white_noise]
+            return white_noise
+            
+        alpha = torch.exp(-1.0 / self.correlation_time)
+        colored_noise = alpha * self.noise_history[-1] + torch.sqrt(1 - alpha**2) * white_noise
+        
+        self.noise_history.append(colored_noise)
+        if len(self.noise_history) > self.correlation_time.item():
+            self.noise_history.pop(0)
+            
+        return colored_noise * self.temperature
+
+
 class NarrativeFieldSimulator:
     def __init__(self):
         # Initialize quantum semantic space
@@ -175,6 +237,8 @@ class NarrativeFieldSimulator:
         self.energy_threshold = 2.0  # Maximum allowed energy
         self.pattern_memory = PatternMemory(self.stories)
         self.pattern_evolution = PatternEvolution()
+        self.phase_space_tracker = PhaseSpaceTracker(self.quantum_dim)
+        self.environmental_coupling = EnvironmentalCoupling()
 
     def create_wave_function(self, content: str, story_id: str) -> NarrativeWave:
         """Convert story to quantum wave function and add to stories dict"""
@@ -243,16 +307,16 @@ class NarrativeFieldSimulator:
         self.field_state += vacuum_fluctuation
 
     def apply_environmental_effects(self, wave: NarrativeWave, dt: float):
-        """Simulate interaction with environment"""
-        noise = torch.randn_like(wave.embedding) * 0.01
+        """Simulate interaction with environment using colored noise"""
+        colored_noise = self.environmental_coupling.generate_colored_noise(wave.embedding.shape)
         
         environment_coupling = torch.tensor(0.1, dtype=torch.float32)
-        wave.coherence *= torch.exp(-environment_coupling * dt)
+        wave.coherence *= torch.exp(-environment_coupling * torch.tensor(dt, dtype=torch.float32))
         
-        vacuum_energy = 0.01
-        vacuum_fluctuation = torch.randn_like(self.field_state) * vacuum_energy
+        vacuum_energy = torch.tensor(0.01, dtype=torch.float32)
+        vacuum_fluctuation = colored_noise * vacuum_energy
         
-        return wave.embedding + noise, vacuum_fluctuation
+        return wave.embedding + colored_noise, vacuum_fluctuation
 
     def enforce_energy_conservation(self):
         """Enforce energy conservation in the field"""
@@ -338,6 +402,27 @@ class NarrativeFieldSimulator:
 
         return patterns
 
+    def calculate_pattern_interaction(self, pattern1: Dict, pattern2: Dict) -> Dict:
+        """Calculate interaction between patterns"""
+        distance = torch.norm(pattern1['center'] - pattern2['center'])
+        overlap = torch.max(torch.zeros(1), 
+                           (pattern1['radius'] + pattern2['radius'] - distance) / 
+                           (pattern1['radius'] + pattern2['radius']))
+        
+        phase_coherence = torch.cos(pattern1['phase'] - pattern2['phase'])
+        
+        field_interaction = torch.cosine_similarity(
+            pattern1['center'].unsqueeze(0),
+            pattern2['center'].unsqueeze(0)
+        )
+        
+        return {
+            'overlap': float(overlap),
+            'phase_coherence': float(phase_coherence),
+            'field_interaction': float(field_interaction),
+            'interaction_strength': float(overlap * phase_coherence * field_interaction)
+        }
+
     def simulate_timestep(self, dt: float):
         """Simulate one timestep of field evolution"""
         # Update all wave functions
@@ -377,6 +462,23 @@ class NarrativeFieldSimulator:
         # Update pattern evolution
         self.pattern_evolution.update(patterns, self.field_state)
 
+        # Record state in phase space
+        self.phase_space_tracker.record_state(self.field_state, patterns)
+
+        # Analyze pattern interactions
+        for i, pattern1 in enumerate(patterns):
+            for j, pattern2 in enumerate(patterns[i+1:], start=i+1):
+                interaction = self.calculate_pattern_interaction(pattern1, pattern2)
+                # Use interaction data to modify pattern evolution
+                # This is a placeholder and should be implemented based on your specific requirements
+                pattern1['field_strength'] *= (1 + interaction['interaction_strength'] * dt)
+                pattern2['field_strength'] *= (1 + interaction['interaction_strength'] * dt)
+
+        # Analyze attractor properties periodically
+        if len(self.phase_space_tracker.trajectory) % 100 == 0:
+            attractor_properties = self.phase_space_tracker.analyze_attractor()
+            logger.info(f"Attractor properties: {attractor_properties}")
+
 
 # Example usage
 simulator = NarrativeFieldSimulator()
@@ -414,3 +516,4 @@ for t in range(100):
         print(f"Field energy: {field_energy:.2f}")
 
     print(f"Number of active stories: {len(simulator.stories)}")
+
