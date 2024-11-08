@@ -205,14 +205,14 @@ class MetaModelGenerator(nn.Module):
         """Enhanced visualization with feature importance and learning curves"""
         try:
             plt.figure(figsize=(20, 5))
-            
+
             # Plot 1: Predictions (now including support points)
             plt.subplot(1, 4, 1)
             with torch.no_grad():
                 initial_pred = self.forward(query_x)
                 adapted_pred = self.forward_with_fast_weights(query_x, fast_weights)
                 support_pred = self.forward(support_x)
-                
+
             plt.scatter(query_y.cpu().numpy(), initial_pred.cpu().numpy(), 
                        alpha=0.5, label='Query (Pre)')
             plt.scatter(query_y.cpu().numpy(), adapted_pred.cpu().numpy(), 
@@ -222,13 +222,9 @@ class MetaModelGenerator(nn.Module):
             plt.plot([query_y.min().item(), query_y.max().item()], 
                     [query_y.min().item(), query_y.max().item()], 
                     'r--', label='Perfect')
-            plt.xlabel('True Values')
-            plt.ylabel('Predicted Values')
-            plt.title("Predictions vs True Values")
-            plt.legend()
-
-            # Plot 2: Feature Importance
-            plt.subplot(1, 4, 2)
+            self._extracted_from_visualize_adaptation_30(
+                'True Values', 'Predicted Values', "Predictions vs True Values", 2
+            )
             with torch.no_grad():
                 feature_importance = torch.zeros(query_x.shape[1])
                 for i in range(query_x.shape[1]):
@@ -236,65 +232,73 @@ class MetaModelGenerator(nn.Module):
                     perturbed_x[:, i] = torch.randn_like(perturbed_x[:, i])
                     perturbed_pred = self.forward_with_fast_weights(perturbed_x, fast_weights)
                     feature_importance[i] = F.mse_loss(perturbed_pred, adapted_pred)
-                    
+
             plt.bar(range(len(feature_importance)), 
                     feature_importance.cpu().numpy())
-            plt.xlabel('Feature Index')
-            plt.ylabel('Importance (MSE Impact)')
-            plt.title('Feature Importance')
-
+            self._extracted_from_visualize_adaptation_30(
+                'Feature Index', 'Importance (MSE Impact)', 'Feature Importance'
+            )
             # Plot 3: Error Distribution
             plt.subplot(1, 4, 3)
             initial_errors = (initial_pred - query_y).cpu().numpy()
             adapted_errors = (adapted_pred - query_y).cpu().numpy()
             plt.hist(initial_errors, alpha=0.5, label='Pre-Adaptation', bins=20)
             plt.hist(adapted_errors, alpha=0.5, label='Post-Adaptation', bins=20)
-            plt.xlabel('Prediction Error')
-            plt.ylabel('Count')
-            plt.title('Error Distribution')
-            plt.legend()
-
-            # Plot 4: Adaptation Progress
-            plt.subplot(1, 4, 4)
+            self._extracted_from_visualize_adaptation_30(
+                'Prediction Error', 'Count', 'Error Distribution', 4
+            )
             progress_x = query_x[:5]  # Track few points for visualization
             progress_y = query_y[:5]
             adaptation_steps = []
-            
+
             temp_weights = {name: param.clone() for name, param in self.named_parameters()}
             for step in range(6):  # Track adaptation progress
                 with torch.no_grad():
                     pred = self.forward_with_fast_weights(progress_x, temp_weights)
                     adaptation_steps.append(F.mse_loss(pred, progress_y).item())
-                
+
                 if step < 5:  # Don't update on last step
                     support_pred = self.forward_with_fast_weights(support_x, temp_weights)
                     inner_loss = F.mse_loss(support_pred, support_y)
                     grads = torch.autograd.grad(inner_loss, temp_weights.values())
-                    
+
                     for (name, weight), grad in zip(temp_weights.items(), grads):
                         temp_weights[name] = weight - self.inner_lr * grad
 
             plt.plot(adaptation_steps, marker='o')
-            plt.xlabel('Adaptation Step')
-            plt.ylabel('MSE Loss')
-            plt.title('Adaptation Progress')
-            
+            self._extracted_from_visualize_adaptation_30(
+                'Adaptation Step', 'MSE Loss', 'Adaptation Progress'
+            )
             # Add overall metrics
             plt.suptitle(f"{task_name}\n" 
                         f"MSE Before: {F.mse_loss(initial_pred, query_y):.4f}, "
                         f"MSE After: {F.mse_loss(adapted_pred, query_y):.4f}\n"
                         f"Adaptation Improvement: {((F.mse_loss(initial_pred, query_y) - F.mse_loss(adapted_pred, query_y)) / F.mse_loss(initial_pred, query_y) * 100):.1f}%")
-            
+
             plt.tight_layout()
             save_path = f'adaptation_plot_{task_name.replace(" ", "_")}.png'
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             logger.info(f"Saved visualization to {save_path}")
             return plt.gcf()
-            
+
         except Exception as e:
             logger.error(f"Error in visualization: {str(e)}")
             logger.error(f"Shapes - query_x: {query_x.shape}, query_y: {query_y.shape}")
             return None
+
+    # TODO Rename this here and in `visualize_adaptation`
+    def _extracted_from_visualize_adaptation_30(self, arg0, arg1, arg2, arg3):
+        self._extracted_from_visualize_adaptation_30(arg0, arg1, arg2)
+        plt.legend()
+
+            # Plot 2: Feature Importance
+        plt.subplot(1, 4, arg3)
+
+    # TODO Rename this here and in `visualize_adaptation`
+    def _extracted_from_visualize_adaptation_30(self, arg0, arg1, arg2):
+        plt.xlabel(arg0)
+        plt.ylabel(arg1)
+        plt.title(arg2)
 
 
 def create_synthetic_tasks(
@@ -366,10 +370,7 @@ def create_task_dataloader(
         tasks,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=lambda x: [  # Custom collate function to maintain tuple structure
-            (support_x, support_y, query_x, query_y) 
-            for support_x, support_y, query_x, query_y in x
-        ]
+        collate_fn=lambda x: list(x),
     )
 
 
@@ -379,7 +380,7 @@ def analyze_task_difficulty(
     """Analyze the complexity and difficulty of a given task"""
     support_x, support_y, query_x, query_y = task
 
-    metrics = {
+    return {
         "input_variance": torch.var(support_x).item(),
         "output_variance": torch.var(support_y).item(),
         "input_output_correlation": torch.corrcoef(
@@ -389,8 +390,6 @@ def analyze_task_difficulty(
             support_x.mean(0) - query_x.mean(0)
         ).item(),
     }
-
-    return metrics
 
 
 if __name__ == "__main__":
@@ -437,20 +436,20 @@ if __name__ == "__main__":
 
     for epoch in range(num_epochs):
         logger.info(f"Starting epoch {epoch+1}/{num_epochs}")
-        
+
         for batch_idx, task_batch in enumerate(task_dataloader):
             loss, grad_norm = meta_model.meta_train_step(task_batch, device)
-            
+
             if batch_idx % 5 == 0:
                 logger.info(f"Batch {batch_idx} - Loss: {loss:.4f}, Grad Norm: {grad_norm:.4f}")
-                
+
                 # Get first task from batch for visualization
                 support_x, support_y, query_x, query_y = task_batch[0]
-                
-                logger.info(f"Visualization data shapes:")
+
+                logger.info("Visualization data shapes:")
                 logger.info(f"Support X: {support_x.shape}, Support Y: {support_y.shape}")
                 logger.info(f"Query X: {query_x.shape}, Query Y: {query_y.shape}")
-                
+
                 fig = meta_model.visualize_adaptation(
                     support_x.to(device), 
                     support_y.to(device),
@@ -459,7 +458,7 @@ if __name__ == "__main__":
                     {name: param.clone() for name, param in meta_model.named_parameters()},
                     f"Epoch_{epoch+1}_Batch_{batch_idx}"
                 )
-                
+
                 if fig is not None:
                     plt.close(fig)
 
