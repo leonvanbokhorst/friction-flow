@@ -110,6 +110,30 @@ This PoC implements a Model-Agnostic Meta-Learning (MAML) approach for rapid ada
 - Comprehensive visualization suite for adaptation analysis
 - Built-in feature importance analysis and learning curve tracking
 
+```mermaid
+sequenceDiagram
+    participant MetaModelGenerator
+    participant TaskBatch
+    participant Device
+    participant FastWeights
+    participant MetaOptimizer
+    participant Scheduler
+
+    MetaModelGenerator->>TaskBatch: Get task batch
+    loop for each task in task_batch
+        MetaModelGenerator->>FastWeights: Clone parameters
+        loop Inner loop steps
+            FastWeights->>MetaModelGenerator: forward_with_fast_weights(support_x)
+            MetaModelGenerator->>FastWeights: Compute gradients
+            FastWeights->>FastWeights: Update fast weights
+        end
+        FastWeights->>MetaModelGenerator: forward_with_fast_weights(query_x)
+        MetaModelGenerator->>MetaOptimizer: Accumulate meta-gradients
+    end
+    MetaOptimizer->>MetaModelGenerator: Apply meta-update
+    MetaModelGenerator->>Scheduler: Step with avg_loss
+```
+
 This implementation enables the system to quickly adapt to new narrative contexts with minimal data, making it particularly valuable for modeling emerging story dynamics.
 
 ## Development Guidelines
