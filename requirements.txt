@@ -13,3 +13,5 @@ transformers
 PyWavelets
 scikit-learn
 sentence-transformers
+wandb
+matplotlib
