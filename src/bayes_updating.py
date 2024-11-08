@@ -17,14 +17,20 @@ class BeliefState:
     A data structure that represents a belief about a topic using vector embeddings.
     - belief_vector: High-dimensional vector representing semantic meaning
     - confidence: Scalar value [0-1] indicating certainty in current belief
-    - prior_states: Historical record of previous beliefs and confidences
+    - prior_states: Historical record of previous beliefs and confidences (limited to max_history)
     - themes: List of identified themes (currently unused but prepared for future)
     """
 
     belief_vector: np.ndarray
     confidence: float
+    max_history: int = 100  # Default max history size
     prior_states: List[Tuple[np.ndarray, float]] = field(default_factory=list)
     themes: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        """Ensure prior_states doesn't exceed max_history"""
+        if len(self.prior_states) > self.max_history:
+            self.prior_states = self.prior_states[-self.max_history :]
 
 
 class BayesianBeliefUpdater:
@@ -43,17 +49,22 @@ class BayesianBeliefUpdater:
         self.theme_weights = {}
         self.logger = logging.getLogger(__name__)
 
-    async def initialize_belief_state(self, topic: str) -> BeliefState:
+    async def initialize_belief_state(
+        self, topic: str, max_history: int = 100
+    ) -> BeliefState:
         """
         Initialize a new belief state for a given topic.
+
+        Args:
+            topic: The topic to initialize beliefs for
+            max_history: Maximum number of historical states to maintain
         """
-        # Generate initial embedding for the topic
         embedding = await self.llm.generate_embedding(topic)
 
-        # Create initial belief state
         belief_state = BeliefState(
             belief_vector=np.array(embedding),
             confidence=0.5,  # Start with moderate confidence
+            max_history=max_history,
             themes=[],
         )
 
@@ -93,10 +104,14 @@ class BayesianBeliefUpdater:
 
         current_state = self.belief_states[topic]
 
-        # Store current state in history
+        # Store current state in history with size limit
         current_state.prior_states.append(
             (current_state.belief_vector.copy(), current_state.confidence)
         )
+        if len(current_state.prior_states) > current_state.max_history:
+            current_state.prior_states = current_state.prior_states[
+                -current_state.max_history :
+            ]
 
         # Generate embedding for new evidence
         evidence_embedding = np.array(await self.llm.generate_embedding(new_evidence))
