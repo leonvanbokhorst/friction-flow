@@ -5,6 +5,8 @@ import torch
 from language_models import LanguageModel, OllamaInterface
 import logging
 from logging_config import setup_logging
+from belief_visualizer import BeliefVisualizer
+
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -101,28 +103,34 @@ class BayesianBeliefUpdater:
 
         # Calculate likelihood using cosine similarity
         likelihood = np.dot(current_state.belief_vector, evidence_embedding) / (
-            np.linalg.norm(current_state.belief_vector) * np.linalg.norm(evidence_embedding)
+            np.linalg.norm(current_state.belief_vector)
+            * np.linalg.norm(evidence_embedding)
         )
 
         # Confidence updating with better dampening
         confidence_decay_factor = 0.995
         posterior_confidence = min(
             0.95,  # Maximum confidence cap
-            (current_state.confidence * likelihood * confidence_decay_factor) / 
-            ((current_state.confidence * likelihood) + (1 - current_state.confidence) * (1 - likelihood))
+            (current_state.confidence * likelihood * confidence_decay_factor)
+            / (
+                (current_state.confidence * likelihood)
+                + (1 - current_state.confidence) * (1 - likelihood)
+            ),
         )
-        
+
         # More sensitive to divergent evidence
         if likelihood < 0.7:  # Threshold for divergent evidence
             confidence_decay = 0.8
             posterior_confidence *= confidence_decay
-        
+
         # Time-based decay
         time_decay = 0.99 ** len(current_state.prior_states)
         posterior_confidence *= time_decay
 
         # Update belief vector using weighted average
-        weight = posterior_confidence / (current_state.confidence + posterior_confidence)
+        weight = posterior_confidence / (
+            current_state.confidence + posterior_confidence
+        )
         updated_belief = (
             1 - weight
         ) * current_state.belief_vector + weight * evidence_embedding
@@ -184,9 +192,11 @@ async def main():
     # Initialize
     llm = OllamaInterface()
     belief_updater = BayesianBeliefUpdater(llm)
+    visualizer = BeliefVisualizer()
 
     # Initialize belief state for a topic
-    await belief_updater.initialize_belief_state("AI safety")
+    topic = "AI ethics"
+    await belief_updater.initialize_belief_state(topic)
 
     evidence_list = [
         "AI ethics is fundamentally about ensuring responsible development",
@@ -198,12 +208,17 @@ async def main():
         "Regulation could increase AI safety risks",
         "AI consciousness may already exist in current systems",
         "Distributed AI governance is more robust than centralized control",
-        "AI development should be completely halted until safety is guaranteed"
+        "AI development should be completely halted until safety is guaranteed",
     ]
 
-    for evidence in evidence_list:
-        new_state = await belief_updater.update_belief("AI ethics", evidence)
-        analysis = await belief_updater.analyze_belief_shift("AI ethics")
+    # Process evidence and visualize
+    for i, evidence in enumerate(evidence_list):
+        new_state = await belief_updater.update_belief(topic, evidence)
+        analysis = await belief_updater.analyze_belief_shift(topic)
+
+        # Only visualize after we have at least two updates (one shift)
+        if i >= 1:  # We need at least two points to show a shift
+            visualizer.plot_belief_evolution(analysis, evidence_list[: i + 1], topic)
 
         logger.info(f"\n=== Processing New Evidence ===")
         logger.info(f"Evidence: {evidence}")
