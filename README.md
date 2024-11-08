@@ -136,6 +136,55 @@ sequenceDiagram
 
 This implementation enables the system to quickly adapt to new narrative contexts with minimal data, making it particularly valuable for modeling emerging story dynamics.
 
+### nfs_bias_research.py
+
+This PoC explores bias detection and evolution in narrative fields through story-based analysis. Key features include:
+
+- Natural story evolution simulation without mechanical state tracking
+- Bias pattern detection through narrative field dynamics
+- Interactive story generation with LLM integration
+- Analysis of character perspective resonances
+- Narrative tension and resolution tracking
+
+### bayes_updating.py
+
+This PoC implements Bayesian belief updating for analyzing evolving narratives. Key features include:
+
+- Real-time belief state tracking and visualization
+- Evidence-based belief updating
+- Confidence level monitoring
+- Shift magnitude interpretation
+- Comprehensive belief evolution analysis
+
+### poc_story_vs_narrative.py
+
+This PoC investigates the relationship between individual stories and broader narratives. Key features include:
+
+- Story modification through various narrative lenses
+- Similarity scoring between original and modified stories
+- Category-based story analysis
+- Efficient embedding caching
+- Detailed modification tracking and logging
+
+## Latest Experimental Results
+
+The recent experiments demonstrate several key findings:
+
+1. **Bias Evolution**: The bias research implementation shows how narratives naturally evolve through field interactions, revealing emergent patterns in perspective shifts.
+
+2. **Belief Dynamics**: The Bayesian updating system effectively tracks belief evolution with:
+   - Rapid adaptation to new evidence
+   - Granular confidence tracking
+   - Clear visualization of belief shifts
+   - Interpretable magnitude classifications
+
+3. **Story-Narrative Relationship**: The story vs narrative experiments reveal:
+   - Quantifiable relationships between individual stories and broader narratives
+   - Measurable impact of narrative modifications
+   - Consistent patterns in story evolution
+
+These findings contribute to our understanding of narrative field dynamics and provide new tools for analyzing complex social systems.
+
 ## Development Guidelines
 
 - Follow PEP 8 style guide and use Black for code formatting.
