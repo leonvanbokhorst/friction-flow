@@ -193,6 +193,14 @@ class MetaModelGenerator(nn.Module):
 
         return {"mse": mse, "mae": mae, "r2": r2, "rmse": np.sqrt(mse)}
 
+    def _setup_plot_formatting(self, xlabel: str, ylabel: str, title: str, add_legend: bool = True):
+        """Helper method to set up common plot formatting"""
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.title(title)
+        if add_legend:
+            plt.legend()
+
     def visualize_adaptation(
         self,
         support_x: torch.Tensor,
@@ -206,7 +214,7 @@ class MetaModelGenerator(nn.Module):
         try:
             plt.figure(figsize=(20, 5))
 
-            # Plot 1: Predictions (now including support points)
+            # Plot 1: Predictions
             plt.subplot(1, 4, 1)
             with torch.no_grad():
                 initial_pred = self.forward(query_x)
@@ -222,9 +230,10 @@ class MetaModelGenerator(nn.Module):
             plt.plot([query_y.min().item(), query_y.max().item()], 
                     [query_y.min().item(), query_y.max().item()], 
                     'r--', label='Perfect')
-            self._extracted_from_visualize_adaptation_30(
-                'True Values', 'Predicted Values', "Predictions vs True Values", 2
-            )
+            self._setup_plot_formatting('True Values', 'Predicted Values', 'Predictions vs True Values')
+
+            # Plot 2: Feature Importance
+            plt.subplot(1, 4, 2)
             with torch.no_grad():
                 feature_importance = torch.zeros(query_x.shape[1])
                 for i in range(query_x.shape[1]):
@@ -233,20 +242,19 @@ class MetaModelGenerator(nn.Module):
                     perturbed_pred = self.forward_with_fast_weights(perturbed_x, fast_weights)
                     feature_importance[i] = F.mse_loss(perturbed_pred, adapted_pred)
 
-            plt.bar(range(len(feature_importance)), 
-                    feature_importance.cpu().numpy())
-            self._extracted_from_visualize_adaptation_30(
-                'Feature Index', 'Importance (MSE Impact)', 'Feature Importance'
-            )
+            plt.bar(range(len(feature_importance)), feature_importance.cpu().numpy())
+            self._setup_plot_formatting('Feature Index', 'Importance (MSE Impact)', 'Feature Importance', False)
+
             # Plot 3: Error Distribution
             plt.subplot(1, 4, 3)
             initial_errors = (initial_pred - query_y).cpu().numpy()
             adapted_errors = (adapted_pred - query_y).cpu().numpy()
             plt.hist(initial_errors, alpha=0.5, label='Pre-Adaptation', bins=20)
             plt.hist(adapted_errors, alpha=0.5, label='Post-Adaptation', bins=20)
-            self._extracted_from_visualize_adaptation_30(
-                'Prediction Error', 'Count', 'Error Distribution', 4
-            )
+            self._setup_plot_formatting('Prediction Error', 'Count', 'Error Distribution')
+
+            # Plot 4: Adaptation Progress
+            plt.subplot(1, 4, 4)
             progress_x = query_x[:5]  # Track few points for visualization
             progress_y = query_y[:5]
             adaptation_steps = []
@@ -266,9 +274,8 @@ class MetaModelGenerator(nn.Module):
                         temp_weights[name] = weight - self.inner_lr * grad
 
             plt.plot(adaptation_steps, marker='o')
-            self._extracted_from_visualize_adaptation_30(
-                'Adaptation Step', 'MSE Loss', 'Adaptation Progress'
-            )
+            self._setup_plot_formatting('Adaptation Step', 'MSE Loss', 'Adaptation Progress')
+
             # Add overall metrics
             plt.suptitle(f"{task_name}\n" 
                         f"MSE Before: {F.mse_loss(initial_pred, query_y):.4f}, "
@@ -285,20 +292,6 @@ class MetaModelGenerator(nn.Module):
             logger.error(f"Error in visualization: {str(e)}")
             logger.error(f"Shapes - query_x: {query_x.shape}, query_y: {query_y.shape}")
             return None
-
-    # TODO Rename this here and in `visualize_adaptation`
-    def _extracted_from_visualize_adaptation_30(self, arg0, arg1, arg2, arg3):
-        self._extracted_from_visualize_adaptation_30(arg0, arg1, arg2)
-        plt.legend()
-
-            # Plot 2: Feature Importance
-        plt.subplot(1, 4, arg3)
-
-    # TODO Rename this here and in `visualize_adaptation`
-    def _extracted_from_visualize_adaptation_30(self, arg0, arg1, arg2):
-        plt.xlabel(arg0)
-        plt.ylabel(arg1)
-        plt.title(arg2)
 
 
 def create_synthetic_tasks(
