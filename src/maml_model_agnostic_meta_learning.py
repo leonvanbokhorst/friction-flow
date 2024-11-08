@@ -122,6 +122,8 @@ class MetaModelGenerator(nn.Module):
                 # Update fast weights with gradient clipping
                 for (name, weight), grad in zip(fast_weights.items(), grads):
                     if grad is not None:
+                        torch.nn.utils.clip_grad_norm_(grad, max_norm=1.0)  # Global norm clipping
+                        fast_weights[name] = weight - self.inner_lr * grad
                         clipped_grad = torch.clamp(grad, -1.0, 1.0)  # Stability
                         fast_weights[name] = weight - self.inner_lr * clipped_grad
 
@@ -191,7 +193,14 @@ class MetaModelGenerator(nn.Module):
             mae = F.l1_loss(y_pred, y_true).item()
             r2 = r2_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
 
-        return {"mse": mse, "mae": mae, "r2": r2, "rmse": np.sqrt(mse)}
+        def compute_metrics(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> Dict[str, float]:
+            """Compute multiple metrics for model evaluation"""
+            with torch.no_grad():
+                mse = F.mse_loss(y_pred, y_true).item()
+                mae = F.l1_loss(y_pred, y_true).item()
+                r2 = r2_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
+                rmse = np.sqrt(mse)
+            return {"mse": mse, "mae": mae, "r2": r2, "rmse": rmse}
 
     def _setup_plot_formatting(self, xlabel: str, ylabel: str, title: str, add_legend: bool = True):
         """Helper method to set up common plot formatting"""
@@ -277,6 +286,13 @@ class MetaModelGenerator(nn.Module):
             self._setup_plot_formatting('Adaptation Step', 'MSE Loss', 'Adaptation Progress')
 
             # Add overall metrics
+            def setup_visualization_plot(x_data, y_data, plot_title, legend_labels):
+                plt.xlabel(x_data)
+                plt.ylabel(y_data)
+                plt.title(plot_title)
+                if legend_labels:
+                    plt.legend()
+
             plt.suptitle(f"{task_name}\n" 
                         f"MSE Before: {F.mse_loss(initial_pred, query_y):.4f}, "
                         f"MSE After: {F.mse_loss(adapted_pred, query_y):.4f}\n"
