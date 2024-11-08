@@ -69,6 +69,21 @@ class MetaModelGenerator(nn.Module):
         task_batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
         device: torch.device,
     ) -> Tuple[float, float]:
+        """
+        Core MAML training step that implements the bi-level optimization:
+        1. Inner Loop: Adapt to individual tasks using gradient descent
+        2. Outer Loop: Update meta-parameters to optimize post-adaptation performance
+        
+        Args:
+            task_batch: List of (support_x, support_y, query_x, query_y) tuples
+                - support_x/y: Used for task adaptation (inner loop)
+                - query_x/y: Used for meta-update (outer loop)
+            device: Computation device (CPU/GPU)
+        
+        Returns:
+            avg_meta_loss: Average loss across all tasks after adaptation
+            avg_grad_norm: Average gradient norm for monitoring training
+        """
         total_meta_loss = 0.0
         total_grad_norm = 0.0
 
@@ -80,54 +95,50 @@ class MetaModelGenerator(nn.Module):
             query_x = query_x.to(device)
             query_y = query_y.to(device)
 
-            # Inner loop optimization
-            fast_weights = {}
-            for name, param in self.named_parameters():
-                fast_weights[name] = param.clone()
-
-            # Multiple inner loop steps
-            for _ in range(3):
+            fast_weights = {name: param.clone() for name, param in self.named_parameters()}
+            # Multiple gradient steps for task adaptation
+            for _ in range(3):  # Inner loop steps
                 support_pred = self.forward_with_fast_weights(support_x, fast_weights)
                 inner_loss = F.mse_loss(support_pred, support_y)
 
-                # Manual gradient computation
+                # Compute gradients w.r.t fast_weights (create_graph=True enables higher-order gradients)
                 grads = torch.autograd.grad(
                     inner_loss,
                     fast_weights.values(),
-                    create_graph=True,
+                    create_graph=True,  # Required for meta-learning
                     allow_unused=True,
                 )
 
                 # Update fast weights with gradient clipping
                 for (name, weight), grad in zip(fast_weights.items(), grads):
                     if grad is not None:
-                        clipped_grad = torch.clamp(grad, -1.0, 1.0)
+                        clipped_grad = torch.clamp(grad, -1.0, 1.0)  # Stability
                         fast_weights[name] = weight - self.inner_lr * clipped_grad
 
-            # Compute meta loss
+            # Outer Loop: Meta-Update
+            # Evaluate performance on query set using adapted weights
             query_pred = self.forward_with_fast_weights(query_x, fast_weights)
             meta_loss = F.mse_loss(query_pred, query_y)
 
-            # Compute meta gradients
-            meta_loss.backward()
+            # Accumulate meta-gradients
+            meta_loss.backward()  # This propagates through the entire inner loop
             total_meta_loss += meta_loss.item()
 
-            # Calculate gradient norm
+            # Monitor gradient norms
             with torch.no_grad():
-                grad_norm = 0.0
-                for param in self.parameters():
-                    if param.grad is not None:
-                        grad_norm += param.grad.norm().item() ** 2
-                total_grad_norm += grad_norm**0.5
+                grad_norm = sum(
+                    param.grad.norm().item() ** 2 
+                    for param in self.parameters() 
+                    if param.grad is not None
+                ) ** 0.5
+                total_grad_norm += grad_norm
 
-        # Average the losses and gradients
-        avg_meta_loss = total_meta_loss / len(task_batch[0])
-        avg_grad_norm = total_grad_norm / len(task_batch[0])
+        # Average and apply meta-update
+        avg_meta_loss = total_meta_loss / len(task_batch)
+        avg_grad_norm = total_grad_norm / len(task_batch)
 
-        # Gradient clipping
+        # Gradient clipping for stable meta-updates
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-
-        # Update meta parameters
         self.meta_optimizer.step()
 
         return avg_meta_loss, avg_grad_norm
@@ -165,29 +176,47 @@ def create_synthetic_tasks(
     input_size: int = 10,
     output_size: int = 1,
 ) -> List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
-    """Create synthetic tasks for meta-learning."""
+    """
+    Creates a set of synthetic regression tasks for meta-learning training.
+    Each task represents a different non-linear function with controlled complexity.
+    
+    Task Generation Process:
+    1. Generate normalized input features
+    2. Create task-specific transformation
+    3. Add controlled noise for robustness
+    4. Split into support (training) and query (testing) sets
+    
+    Returns:
+        List of (support_x, support_y, query_x, query_y) tuples for each task
+    """
     tasks = []
-    split_idx = samples_per_task // 2
+    split_idx = samples_per_task // 2  # 50/50 split between support and query sets
 
     for _ in range(num_tasks):
-        # Generate more diverse input data
+        # 1. Generate and normalize input features
         x = torch.randn(samples_per_task, input_size)
-        x = (x - x.mean(0)) / (x.std(0) + 1e-8)
+        x = (x - x.mean(0)) / (x.std(0) + 1e-8)  # Standardize inputs
 
-        # Create more diverse task functions with multiple non-linearities
-        coefficients = torch.randn(input_size, output_size) * 0.3
-        bias = torch.randn(output_size) * 0.1
+        # 2. Create task-specific transformation
+        coefficients = torch.randn(input_size, output_size) * 0.3  # Random linear transformation
+        bias = torch.randn(output_size) * 0.1  # Random bias term
 
-        # Balanced task complexity
-        y = torch.matmul(x, coefficients) + bias
-        y += 0.15 * torch.sin(2.0 * torch.matmul(x, coefficients))
-        y += 0.08 * torch.tanh(1.5 * torch.matmul(x, coefficients))
+        # 3. Generate outputs with multiple non-linearities
+        y = torch.matmul(x, coefficients) + bias  # Linear component
+        y += 0.15 * torch.sin(2.0 * torch.matmul(x, coefficients))  # Sinusoidal component
+        y += 0.08 * torch.tanh(1.5 * torch.matmul(x, coefficients))  # Tanh component
 
-        # Adaptive noise based on signal magnitude
-        noise_scale = 0.02 * torch.std(y)
+        # 4. Add adaptive noise based on signal magnitude
+        noise_scale = 0.02 * torch.std(y)  # Noise proportional to output variance
         y += noise_scale * torch.randn_like(y)
 
-        tasks.append((x[:split_idx], y[:split_idx], x[split_idx:], y[split_idx:]))
+        # 5. Split into support and query sets
+        tasks.append((
+            x[:split_idx],    # support_x: First half of inputs
+            y[:split_idx],    # support_y: First half of outputs
+            x[split_idx:],    # query_x:   Second half of inputs
+            y[split_idx:]     # query_y:   Second half of outputs
+        ))
 
     return tasks
 
@@ -196,14 +225,17 @@ def create_task_dataloader(
     tasks: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
     batch_size: int = 4,
 ) -> DataLoader:
-    """Create a DataLoader for batches of tasks."""
+    """
+    Organizes tasks into batches for efficient training.
+    Shuffles tasks to prevent learning order dependencies.
+    """
     # Reorganize tasks into separate lists
     support_x = [t[0] for t in tasks]
     support_y = [t[1] for t in tasks]
     query_x = [t[2] for t in tasks]
     query_y = [t[3] for t in tasks]
 
-    # Create dataset from lists
+    # Create dataset and return DataLoader with shuffling
     dataset = list(zip(support_x, support_y, query_x, query_y))
     return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -279,11 +311,9 @@ if __name__ == "__main__":
     support_x, support_y, query_x, query_y = new_task
     support_x, support_y = support_x.to(device), support_y.to(device)
 
-    # Adapt to new task
-    fast_weights = {}
-    for name, param in meta_model.named_parameters():
-        fast_weights[name] = param.clone()
-
+    fast_weights = {
+        name: param.clone() for name, param in meta_model.named_parameters()
+    }
     # Quick adaptation
     for _ in range(5):
         support_pred = meta_model.forward_with_fast_weights(support_x, fast_weights)
