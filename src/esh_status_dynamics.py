@@ -1269,24 +1269,72 @@ class EmotionalDecisionMaking:
     def _calculate_initial_reaction(
         self, agent: EnhancedSocialAgent, proposal: DecisionProposal
     ) -> Dict[EmotionalState.Emotion, float]:
-        """Calculate agent's initial emotional reaction to proposal."""
-        # Initialize with neutral emotion as default
-        reaction = {EmotionalState.Emotion.NEUTRAL: 0.5}  # Default neutral state
+        """Calculate agent's initial emotional reaction with enhanced personality influence."""
+        reactions = {}
 
-        # Base reaction on personality traits
+        # Base emotional tendencies based on personality
+        if agent.personality.stability < 0.5:
+            reactions[EmotionalState.Emotion.ANXIOUS] = 0.7 * (
+                1 - agent.personality.stability
+            )
+
         if agent.personality.openness > 0.7:
-            reaction[EmotionalState.Emotion.CONFIDENT] = 0.7
-        elif agent.personality.stability < 0.4:
-            reaction[EmotionalState.Emotion.ANXIOUS] = 0.6
+            reactions[EmotionalState.Emotion.CONFIDENT] = (
+                0.6 * agent.personality.openness
+            )
 
-        # Modify based on relationship with initiator
+        if agent.personality.dominance > 0.7:
+            reactions[EmotionalState.Emotion.DEFENSIVE] = (
+                0.5 * agent.personality.dominance
+            )
+
+        # Add change resistance for low openness
+        if agent.personality.openness < 0.4:
+            reactions[EmotionalState.Emotion.DEFENSIVE] = 0.8 * (
+                1 - agent.personality.openness
+            )
+
+        # Consider status threat
+        status_threat = self._evaluate_status_threat(agent, proposal)
+        if status_threat > 0.6:
+            reactions[EmotionalState.Emotion.ANGRY] = status_threat * 0.7
+
+        # Add relationship-based reaction
         initiator_relationship = agent.relationships.get(proposal.initiator.id, 0.5)
-        if initiator_relationship > 0.7:
-            reaction[EmotionalState.Emotion.HAPPY] = 0.5
-        elif initiator_relationship < 0.3:
-            reaction[EmotionalState.Emotion.DEFENSIVE] = 0.4
+        if initiator_relationship < 0.3:
+            reactions[EmotionalState.Emotion.DEFENSIVE] = (
+                reactions.get(EmotionalState.Emotion.DEFENSIVE, 0) + 0.4
+            )
+        elif initiator_relationship > 0.7:
+            reactions[EmotionalState.Emotion.HAPPY] = 0.6
 
-        return reaction
+        # Ensure at least neutral emotion if no strong reactions
+        if not reactions:
+            reactions[EmotionalState.Emotion.NEUTRAL] = 0.5
+
+        return reactions
+
+    def _evaluate_status_threat(
+        self, agent: EnhancedSocialAgent, proposal: DecisionProposal
+    ) -> float:
+        """Evaluate perceived threat to agent's status from proposal."""
+        current_status = agent.status.compute_effective_status("general")
+
+        # Calculate potential status impact
+        status_impact = 0.0
+        if hasattr(proposal, "status_implications"):
+            for domain, change in proposal.status_implications.items():
+                if domain in agent.status.expertise:
+                    status_impact += change * agent.status.expertise[domain]
+
+        # Consider personality factors
+        threat_sensitivity = (
+            0.4 * (1 - agent.personality.stability)
+            + 0.3 * agent.personality.dominance
+            + 0.3 * (1 - agent.personality.openness)
+        )
+
+        return min(1.0, abs(status_impact) * threat_sensitivity)
 
     async def _evaluate_options(
         self, agent: EnhancedSocialAgent, options: List[str]
@@ -1475,563 +1523,712 @@ class EmotionalDecisionMaking:
 
         return sum(risk_factors) / len(risk_factors)
 
+    def _generate_round_prompts(
+        self, options: List[Dict[str, Any]], state: Dict[str, Any]
+    ) -> List[str]:
+        """Generate prompts for the current deliberation round.
+
+        Args:
+            options: Available options
+            state: Current deliberation state
+
+        Returns:
+            List of prompts for this round
+        """
+        current_round = len(state.get("rounds", []))
+        consensus_level = state.get("consensus_level", 0.0)
+
+        prompts = []
+
+        # Base prompts for different deliberation stages
+        if current_round == 0:
+            # Initial reactions
+            prompts.append(
+                "What are your initial thoughts and feelings about these options? "
+                "Consider how they might affect you and the group."
+            )
+        elif current_round == 1:
+            # Deeper analysis
+            prompts.append(
+                "Having heard others' views, what concerns or opportunities do you see? "
+                "How might these options affect our working relationships?"
+            )
+        else:
+            # Consensus building
+            prompts.append(
+                f"With a current consensus level of {consensus_level:.2f}, "
+                "what compromises or adjustments would you suggest to build agreement?"
+            )
+
+        # Add option-specific prompts
+        for option in options:
+            emotional_impacts = option.get("emotional_impacts", {})
+            group_alignment = option.get("group_alignment", 0.0)
+
+            prompts.append(
+                f"Regarding option: {option.get('option', 'Unknown')}\n"
+                f"- Emotional impact: {emotional_impacts}\n"
+                f"- Group alignment: {group_alignment:.2f}\n"
+                "What are your thoughts on this specific option?"
+            )
+
+        return prompts
+
+    async def _gather_round_contributions(
+        self, options: List[Dict[str, Any]], state: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Gather round contributions from all agents.
+
+        Args:
+            options: List of available options
+            state: Current deliberation state
+
+        Returns:
+            List of contributions with metadata
+        """
+        contributions = []
+
+        # Generate prompts for this round
+        prompts = self._generate_round_prompts(options, state)
+
+        for agent in self.group.agents:
+            # Generate response considering personality and emotional state
+            response = await self._generate_agent_response(agent, prompts)
+
+            # Calculate contribution weight
+            weight = self._calculate_contribution_weight(agent)
+
+            # Record contribution with metadata
+            contribution = {
+                "agent_id": agent.id,
+                "response": response,
+                "emotional_state": agent.emotional_state.get_dominant_emotion(),
+                "influence_level": agent.status.influence,
+                "contribution_weight": weight,
+                "personality_factors": {
+                    "dominance": agent.personality.dominance,
+                    "agreeableness": agent.personality.agreeableness,
+                    "stability": agent.personality.stability,
+                },
+                "timestamp": len(state.get("rounds", [])),
+                "relationship_context": self._get_relationship_context(agent),
+            }
+
+            contributions.append(contribution)
+
+        return contributions
+
+    def _calculate_contribution_weight(self, agent: EnhancedSocialAgent) -> float:
+        """Calculate the weight/importance of an agent's contribution.
+
+        Args:
+            agent: The agent making the contribution
+
+        Returns:
+            Float between 0 and 1 indicating contribution weight
+        """
+        # Base weight on status
+        status_weight = (
+            0.4 * agent.status.influence
+            + 0.3 * agent.status.respect
+            + 0.3 * agent.status.formal_rank
+        )
+
+        # Adjust for personality factors
+        personality_modifier = (
+            0.4 * agent.personality.dominance
+            + 0.3 * agent.personality.extraversion
+            + 0.3 * agent.personality.stability
+        )
+
+        # Consider emotional state
+        emotion, intensity = agent.emotional_state.get_dominant_emotion()
+        emotional_modifier = 1.0
+        if emotion in {EmotionalState.Emotion.ANGRY, EmotionalState.Emotion.DEFENSIVE}:
+            emotional_modifier = 0.7  # Reduce weight for negative emotions
+        elif emotion == EmotionalState.Emotion.CONFIDENT:
+            emotional_modifier = 1.2  # Increase weight for confidence
+
+        return min(1.0, status_weight * personality_modifier * emotional_modifier)
+
+    async def _generate_agent_response(
+        self, agent: EnhancedSocialAgent, prompts: List[str]
+    ) -> str:
+        """Generate agent responses to all prompts.
+
+        Args:
+            agent: The agent generating responses
+            prompts: List of prompts to respond to
+
+        Returns:
+            Combined response string
+        """
+        responses = []
+
+        for prompt in prompts:
+            # Consider emotional state
+            emotion, intensity = agent.emotional_state.get_dominant_emotion()
+
+            # Modify prompt based on emotional state and personality
+            modified_prompt = self._modify_prompt_for_agent(
+                agent, prompt, emotion, intensity
+            )
+
+            try:
+                # Generate response using agent's LLM
+                response = await agent.llm.generate(modified_prompt)
+                # Add default response if None is returned
+                if response is None:
+                    response = f"Agent {agent.id} acknowledges the situation."
+                responses.append(response)
+            except Exception as e:
+                # Add fallback response in case of error
+                responses.append(f"Agent {agent.id} is processing the situation.")
+
+        # Combine non-empty responses
+        valid_responses = [r for r in responses if r]
+        if not valid_responses:
+            return f"Agent {agent.id} is considering the matter."
+
+        return "\n\n".join(valid_responses)
+
+    def _modify_prompt_for_agent(
+        self,
+        agent: EnhancedSocialAgent,
+        prompt: str,
+        emotion: EmotionalState.Emotion,
+        intensity: float,
+    ) -> str:
+        """Modify prompt based on agent's current state and characteristics.
+
+        Args:
+            agent: The agent generating the response
+            prompt: Original prompt to modify
+            emotion: Agent's current dominant emotion
+            intensity: Intensity of the dominant emotion
+
+        Returns:
+            Modified prompt string incorporating agent's state
+        """
+        # Add emotional context
+        emotional_context = (
+            f"\nCurrent emotional state: {emotion.value} (intensity: {intensity:.2f})"
+        )
+
+        # Add personality influence
+        personality_context = (
+            f"\nPersonality traits:"
+            f"\n- Dominance: {agent.personality.dominance:.2f}"
+            f"\n- Agreeableness: {agent.personality.agreeableness:.2f}"
+            f"\n- Openness: {agent.personality.openness:.2f}"
+            f"\n- Stability: {agent.personality.stability:.2f}"
+        )
+
+        # Add status context
+        status_context = (
+            f"\nStatus factors:"
+            f"\n- Influence: {agent.status.influence:.2f}"
+            f"\n- Respect: {agent.status.respect:.2f}"
+            f"\n- Formal rank: {agent.status.formal_rank:.2f}"
+        )
+
+        # Add relationship context
+        relationship_context = "\nKey relationships:"
+        for other_id, quality in agent.relationships.items():
+            relationship_context += f"\n- Agent {other_id}: {quality:.2f}"
+
+        # Add behavioral guidance based on personality
+        behavior_guidance = self._generate_behavior_guidance(agent)
+
+        # Combine all components
+        return (
+            f"{prompt}\n\n"
+            f"Please respond considering the following context:\n"
+            f"{emotional_context}\n"
+            f"{personality_context}\n"
+            f"{status_context}\n"
+            f"{relationship_context}\n\n"
+            f"Response guidance:\n{behavior_guidance}"
+        )
+
+    def _generate_behavior_guidance(self, agent: EnhancedSocialAgent) -> str:
+        """Generate behavioral guidance based on agent's personality.
+
+        Args:
+            agent: The agent to generate guidance for
+
+        Returns:
+            String containing behavior guidance
+        """
+        guidance = []
+
+        # Extraversion-based guidance
+        if agent.personality.extraversion > 0.7:
+            guidance.append("- Express yourself openly and energetically")
+        elif agent.personality.extraversion < 0.3:
+            guidance.append("- Maintain a more reserved and thoughtful tone")
+
+        # Agreeableness-based guidance
+        if agent.personality.agreeableness > 0.7:
+            guidance.append("- Focus on maintaining group harmony")
+        elif agent.personality.agreeableness < 0.3:
+            guidance.append("- Be direct in expressing disagreement")
+
+        # Dominance-based guidance
+        if agent.personality.dominance > 0.7:
+            guidance.append("- Take a leadership role in the discussion")
+        elif agent.personality.dominance < 0.3:
+            guidance.append("- Support and build upon others' ideas")
+
+        # Openness-based guidance
+        if agent.personality.openness > 0.7:
+            guidance.append("- Consider novel and creative approaches")
+        elif agent.personality.openness < 0.3:
+            guidance.append("- Focus on practical and proven solutions")
+
+        # Stability-based guidance
+        if agent.personality.stability > 0.7:
+            guidance.append("- Maintain emotional equilibrium")
+        elif agent.personality.stability < 0.3:
+            guidance.append("- Allow emotional authenticity in expression")
+
+        return "\n".join(guidance)
+
+    def _get_relationship_context(self, agent: EnhancedSocialAgent) -> Dict[str, Any]:
+        """Get the relationship context for an agent.
+
+        Args:
+            agent: The agent to get relationship context for
+
+        Returns:
+            Dictionary containing relationship information
+        """
+        context = {
+            "relationships": {},
+            "recent_interactions": [],
+            "group_position": self._calculate_group_position(agent),
+        }
+
+        # Get relationship qualities with other agents
+        for other in self.group.agents:
+            if other.id != agent.id:
+                context["relationships"][other.id] = {
+                    "quality": agent.relationships.get(other.id, 0.5),
+                    "recent_emotional_state": other.emotional_state.get_dominant_emotion(),
+                    "status_differential": (
+                        agent.status.compute_effective_status("general")
+                        - other.status.compute_effective_status("general")
+                    ),
+                }
+
+        # Get recent interactions from memory
+        context["recent_interactions"] = agent.memory.get_recent_interactions(3)
+
+        return context
+
+    def _calculate_group_position(self, agent: EnhancedSocialAgent) -> Dict[str, float]:
+        """Calculate agent's position within the group.
+
+        Args:
+            agent: The agent to calculate position for
+
+        Returns:
+            Dictionary containing position metrics
+        """
+        if not self.group.agents:
+            return {"centrality": 0.5, "influence": 0.5, "alignment": 0.5}
+
+        # Calculate centrality based on relationship strengths
+        relationship_sum = sum(agent.relationships.values())
+        avg_relationship = (
+            relationship_sum / len(agent.relationships) if agent.relationships else 0.5
+        )
+
+        # Calculate influence relative to group
+        relative_influence = agent.status.influence / max(
+            a.status.influence for a in self.group.agents
+        )
+
+        # Calculate emotional alignment with group
+        group_emotion = self.group.group_emotion
+        agent_emotion, _ = agent.emotional_state.get_dominant_emotion()
+        alignment = 1.0 if agent_emotion == group_emotion else 0.5
+
+        return {
+            "centrality": avg_relationship,
+            "influence": relative_influence,
+            "alignment": alignment,
+        }
+
     async def _emotional_deliberation(
         self, options: List[Dict[str, Any]], emotional_responses: Dict[str, Dict]
     ) -> Dict[str, Any]:
-        """Facilitate emotional deliberation process for decision options.
+        """Facilitate emotional deliberation process among agents.
 
         Args:
-            options: List of emotion-aware options
+            options: List of available options with emotional impact assessments
             emotional_responses: Initial emotional responses from agents
 
         Returns:
             Dictionary containing deliberation results
         """
-        # Track deliberation state
-        deliberation_state = {
+        state = {
             "rounds": [],
-            "current_preferences": {},
-            "emotional_shifts": {},
             "consensus_level": 0.0,
+            "emotional_shifts": {},
+            "key_insights": [],
         }
 
-        # Run deliberation rounds until consensus or max rounds reached
-        max_rounds = 3
-        for round_num in range(max_rounds):
-            # Get contributions from all agents
-            round_contributions = await self._gather_round_contributions(
-                options, deliberation_state
-            )
+        max_rounds = 3  # Maximum deliberation rounds
+        current_round = 0
 
-            # Process emotional dynamics
-            emotional_shifts = await self._process_round_dynamics(
-                round_contributions, deliberation_state
-            )
+        while current_round < max_rounds and state["consensus_level"] < 0.8:
+            # Gather round contributions
+            contributions = await self._gather_round_contributions(options, state)
 
-            # Update preferences based on contributions
-            new_preferences = self._update_preferences(
-                round_contributions, emotional_shifts
-            )
+            # Process round results
+            round_results = await self._process_round_results(contributions, state)
 
-            # Calculate consensus level
-            consensus_level = self._calculate_round_consensus(new_preferences)
+            # Update state
+            state["rounds"].append(round_results)
+            state["consensus_level"] = round_results["consensus_level"]
+            state["emotional_shifts"].update(round_results["emotional_shifts"])
+            state["key_insights"].extend(round_results["key_insights"])
 
-            # Update deliberation state
-            deliberation_state["rounds"].append(
-                {
-                    "contributions": round_contributions,
-                    "emotional_shifts": emotional_shifts,
-                    "preferences": new_preferences,
-                    "consensus_level": consensus_level,
-                }
-            )
-            deliberation_state["current_preferences"] = new_preferences
-            deliberation_state["emotional_shifts"].update(emotional_shifts)
-            deliberation_state["consensus_level"] = consensus_level
+            current_round += 1
 
-            # Check if sufficient consensus reached
-            if consensus_level > 0.8:  # 80% consensus threshold
-                break
+        return state
 
-        return deliberation_state
-
-    async def _gather_round_contributions(
-        self, options: List[Dict[str, Any]], state: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Gather contributions from all agents for current round."""
-        contributions = []
-        for agent in self.group.agents:
-            contribution = await self._get_agent_contribution(agent, options, state)
-            contributions.append(contribution)
-        return contributions
-
-    async def _get_agent_contribution(
-        self,
-        agent: EnhancedSocialAgent,
-        options: List[Dict[str, Any]],
-        state: Dict[str, Any],
+    async def _process_round_results(
+        self, contributions: List[Dict[str, Any]], state: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Get single agent's contribution for current round."""
-        # Consider agent's personality and emotional state
-        current_emotion = agent.emotional_state.get_dominant_emotion()
+        """Process the results of a deliberation round.
+
+        Args:
+            contributions: List of agent contributions
+            state: Current deliberation state
+
+        Returns:
+            Dictionary containing round results
+        """
+        # Calculate consensus level
+        consensus_level = self._calculate_round_consensus(contributions)
+
+        # Track emotional shifts
+        emotional_shifts = self._track_emotional_shifts(contributions)
+
+        # Extract key insights
+        key_insights = self._extract_key_insights(contributions)
 
         return {
-            "agent_id": agent.id,
-            "preferred_option": self._determine_agent_preference(agent, options),
-            "emotional_state": current_emotion,
-            "influence_attempt": self._determine_influence_attempt(agent, state),
+            "consensus_level": consensus_level,
+            "emotional_shifts": emotional_shifts,
+            "key_insights": key_insights,
+            "contributions": contributions,
         }
 
-    async def _process_round_dynamics(
-        self, contributions: List[Dict[str, Any]], state: Dict[str, Any]
-    ) -> Dict[str, Dict[EmotionalState.Emotion, float]]:
-        """Process emotional dynamics for the current round."""
-        emotional_shifts = {}
+    def _calculate_round_consensus(self, contributions: List[Dict[str, Any]]) -> float:
+        """Calculate consensus level for the current round.
 
-        # Process each agent's emotional response
-        for contribution in contributions:
-            agent_id = contribution["agent_id"]
-            agent = next(a for a in self.group.agents if a.id == agent_id)
+        Args:
+            contributions: List of agent contributions
 
-            # Calculate emotional shift based on group dynamics
-            shift = self._calculate_emotional_shift(agent, contributions, state)
-            emotional_shifts[agent_id] = shift
-
-        return emotional_shifts
-
-    def _update_preferences(
-        self,
-        contributions: List[Dict[str, Any]],
-        emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]],
-    ) -> Dict[str, str]:
-        """Update agent preferences based on round results."""
-        new_preferences = {}
-
-        for contribution in contributions:
-            agent_id = contribution["agent_id"]
-            # Consider emotional shifts in preference updates
-            new_preferences[agent_id] = self._adjust_preference(
-                contribution["preferred_option"], emotional_shifts[agent_id]
-            )
-
-        return new_preferences
-
-    def _calculate_round_consensus(self, preferences: Dict[str, str]) -> float:
-        """Calculate consensus level for current round."""
-        if not preferences:
+        Returns:
+            Float between 0 and 1 indicating consensus level
+        """
+        if not contributions:
             return 0.0
 
-        # Count option preferences
-        option_counts = {}
-        for preference in preferences.values():
-            option_counts[preference] = option_counts.get(preference, 0) + 1
-
-        # Calculate consensus as proportion supporting most popular option
-        max_support = max(option_counts.values())
-        return max_support / len(preferences)
-
-    def _determine_agent_preference(
-        self, agent: EnhancedSocialAgent, options: List[Dict[str, Any]]
-    ) -> str:
-        """Determine agent's current option preference."""
-        # Score each option based on emotional impact and agent characteristics
-        option_scores = {}
-        for option in options:
-            score = (
-                0.4 * option["emotional_impacts"][agent.id]["acceptance"]
-                + 0.3 * (1 - option["risk_level"])
-                + 0.3 * option["group_alignment"]
-            )
-            option_scores[option["option"]] = score
-
-        # Return option with highest score
-        return max(option_scores.items(), key=lambda x: x[1])[0]
-
-    def _determine_influence_attempt(
-        self, agent: EnhancedSocialAgent, state: Dict[str, Any]
-    ) -> str:
-        """Determine how agent attempts to influence others."""
-        if agent.personality.dominance > 0.7:
-            return "assertive"
-        elif agent.personality.agreeableness > 0.7:
-            return "collaborative"
-        else:
-            return "neutral"
-
-    def _calculate_emotional_shift(
-        self,
-        agent: EnhancedSocialAgent,
-        contributions: List[Dict[str, Any]],
-        state: Dict[str, Any],
-    ) -> Dict[EmotionalState.Emotion, float]:
-        """Calculate emotional shift for an agent based on round dynamics."""
-        shifts = {emotion: 0.0 for emotion in EmotionalState.Emotion}
-
-        # Consider influence from other agents
+        # Group contributions by stance
+        stances = {}
         for contribution in contributions:
-            if contribution["agent_id"] != agent.id:
-                other_agent = next(
-                    a for a in self.group.agents if a.id == contribution["agent_id"]
-                )
-                influence = self._calculate_emotional_influence(other_agent, agent)
+            stance = contribution.get("initial_stance", "neutral")
+            stances[stance] = (
+                stances.get(stance, 0) + contribution["contribution_weight"]
+            )
 
-                # Apply emotional influence
-                emotion, intensity = contribution["emotional_state"]
-                shifts[emotion] += influence * intensity
+        # Calculate consensus based on weighted stance distribution
+        total_weight = sum(stances.values())
+        if total_weight == 0:
+            return 0.0
+
+        # Higher consensus when more agents align on a stance
+        max_stance_weight = max(stances.values())
+        return max_stance_weight / total_weight
+
+    def _track_emotional_shifts(
+        self, contributions: List[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, float]]:
+        """Track emotional shifts during deliberation.
+
+        Args:
+            contributions: List of agent contributions
+
+        Returns:
+            Dictionary mapping agent IDs to their emotional shifts
+        """
+        shifts = {}
+        for contribution in contributions:
+            agent_id = contribution["agent_id"]
+            emotion_state = contribution["emotional_state"]
+
+            shifts[agent_id] = {
+                "emotion": emotion_state[0].value,
+                "intensity": emotion_state[1],
+            }
 
         return shifts
 
-    def _adjust_preference(
-        self,
-        current_preference: str,
-        emotional_shift: Dict[EmotionalState.Emotion, float],
-    ) -> str:
-        """Adjust preference based on emotional shifts."""
-        # For now, maintain current preference
-        # Could be enhanced to allow preference changes based on emotional shifts
-        return current_preference
-
-    def _calculate_emotional_influence(
-        self, agent1: EnhancedSocialAgent, agent2: EnhancedSocialAgent
-    ) -> float:
-        """Calculate emotional influence between two agents.
+    def _extract_key_insights(self, contributions: List[Dict[str, Any]]) -> List[str]:
+        """Extract key insights from contributions.
 
         Args:
-            agent1: Source agent (influencer)
-            agent2: Target agent (influenced)
+            contributions: List of agent contributions
 
         Returns:
-            Float between 0 and 1 indicating influence strength
+            List of key insights from the round
         """
-        # Base influence on status and personality
-        status_factor = (
-            0.4 * agent1.status.influence
-            + 0.3 * agent1.status.respect
-            + 0.3 * agent1.status.formal_rank
+        insights = []
+
+        # Sort contributions by weight
+        weighted_contributions = sorted(
+            contributions, key=lambda x: x["contribution_weight"], reverse=True
         )
 
-        personality_factor = (
-            0.4
-            * agent1.personality.extraversion  # More extraverted agents are more influential
-            + 0.3
-            * agent1.personality.dominance  # More dominant agents have stronger influence
-            + 0.3
-            * (
-                1 - agent2.personality.stability
-            )  # Less stable agents are more influenced
-        )
+        # Extract top insights
+        for contribution in weighted_contributions[:3]:  # Top 3 weighted contributions
+            insights.append(
+                {
+                    "agent_id": contribution["agent_id"],
+                    "insight": contribution["response"],
+                    "weight": contribution["contribution_weight"],
+                }
+            )
 
-        # Consider relationship quality
-        relationship_quality = agent1.relationships.get(agent2.id, 0.5)
-
-        # Combine factors with weights
-        return (
-            0.4 * status_factor + 0.3 * personality_factor + 0.3 * relationship_quality
-        )
+        return insights
 
     def _make_final_decision(
         self, deliberation_result: Dict[str, Any]
-    ) -> "DecisionOutcome":
+    ) -> DecisionOutcome:
         """Make final decision based on deliberation results.
 
         Args:
-            deliberation_result: Results from the emotional deliberation process
+            deliberation_result: Results from the deliberation process
 
         Returns:
             DecisionOutcome containing the final decision and its implications
         """
-        # Get final preferences and emotional states
-        final_preferences = deliberation_result["current_preferences"]
-        emotional_shifts = deliberation_result["emotional_shifts"]
+        # Extract key metrics from deliberation
         consensus_level = deliberation_result["consensus_level"]
+        emotional_shifts = deliberation_result["emotional_shifts"]
 
-        # Determine winning option
-        winning_option = self._determine_winning_option(final_preferences)
+        # Identify most supported option and dissenting agents
+        supported_option = self._identify_supported_option(deliberation_result)
+        dissenting_agents = self._identify_dissenters(
+            deliberation_result, supported_option
+        )
 
-        # Calculate decision confidence
+        # Calculate confidence based on consensus and emotional alignment
         confidence = self._calculate_decision_confidence(
-            winning_option, final_preferences, emotional_shifts, consensus_level
+            consensus_level, emotional_shifts, len(dissenting_agents)
         )
 
         # Assess emotional impact
-        emotional_impact = self._assess_decision_impact(
-            winning_option, emotional_shifts, consensus_level
+        emotional_impact = self._assess_emotional_impact(
+            supported_option, emotional_shifts, dissenting_agents
         )
 
-        # Create decision outcome
         return DecisionOutcome(
-            decision=winning_option,
+            decision=supported_option,
             confidence=confidence,
             consensus_level=consensus_level,
             emotional_impact=emotional_impact,
-            dissenting_agents=self._identify_dissenters(
-                winning_option, final_preferences
-            ),
+            dissenting_agents=dissenting_agents,
         )
 
-    def _determine_winning_option(self, preferences: Dict[str, str]) -> str:
-        """Determine the winning option based on final preferences."""
-        if not preferences:
-            raise ValueError("No preferences available for decision")
+    def _identify_supported_option(self, deliberation_result: Dict[str, Any]) -> str:
+        """Identify the most supported option from deliberation results.
 
-        # Count votes for each option
-        vote_counts = {}
-        for preference in preferences.values():
-            vote_counts[preference] = vote_counts.get(preference, 0) + 1
+        Args:
+            deliberation_result: Results from deliberation process
 
-        # Return option with most votes
-        return max(vote_counts.items(), key=lambda x: x[1])[0]
+        Returns:
+            String identifying the selected option
+        """
+        # Aggregate support for each option across all rounds
+        option_support = {}
+
+        for round_result in deliberation_result["rounds"]:
+            for contribution in round_result["contributions"]:
+                if "option_preferences" in contribution:
+                    for option, support in contribution["option_preferences"].items():
+                        weight = contribution["contribution_weight"]
+                        option_support[option] = option_support.get(option, 0) + (
+                            support * weight
+                        )
+
+        # Return option with highest weighted support
+        return max(option_support.items(), key=lambda x: x[1])[0]
+
+    def _identify_dissenters(
+        self, deliberation_result: Dict[str, Any], supported_option: str
+    ) -> List[str]:
+        """Identify agents who dissent from the supported option.
+
+        Args:
+            deliberation_result: Results from deliberation process
+            supported_option: The selected option
+
+        Returns:
+            List of dissenting agent IDs
+        """
+        dissenters = []
+
+        # Check final round contributions
+        final_round = deliberation_result["rounds"][-1]
+        for contribution in final_round["contributions"]:
+            agent_id = contribution["agent_id"]
+
+            # Check if agent's preferred option differs from supported option
+            if "option_preferences" in contribution:
+                preferences = contribution["option_preferences"]
+                if (
+                    supported_option not in preferences
+                    or preferences[supported_option] < 0.4
+                ):  # Threshold for dissent
+                    dissenters.append(agent_id)
+
+        return dissenters
 
     def _calculate_decision_confidence(
         self,
-        winning_option: str,
-        preferences: Dict[str, str],
-        emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]],
         consensus_level: float,
+        emotional_shifts: Dict[str, Dict],
+        num_dissenters: int,
     ) -> float:
-        """Calculate confidence level in the decision."""
+        """Calculate confidence in the decision.
+
+        Args:
+            consensus_level: Level of consensus achieved
+            emotional_shifts: Emotional changes during deliberation
+            num_dissenters: Number of dissenting agents
+
+        Returns:
+            Float between 0 and 1 indicating confidence
+        """
         # Base confidence on consensus level
-        base_confidence = consensus_level
+        confidence = consensus_level
 
-        # Adjust based on emotional stability
-        emotional_stability = self._calculate_emotional_stability(emotional_shifts)
+        # Adjust for emotional stability
+        emotional_stability = self._assess_emotional_stability(emotional_shifts)
+        confidence *= 0.7 + 0.3 * emotional_stability
 
-        # Combine factors
-        return 0.7 * base_confidence + 0.3 * emotional_stability
+        # Reduce confidence based on number of dissenters
+        dissent_factor = max(0.0, 1.0 - (num_dissenters / len(self.group.agents)))
+        confidence *= 0.8 + 0.2 * dissent_factor
 
-    def _calculate_emotional_stability(
-        self, emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]]
-    ) -> float:
-        """Calculate emotional stability of the group."""
+        return min(1.0, max(0.0, confidence))
+
+    def _assess_emotional_stability(self, emotional_shifts: Dict[str, Dict]) -> float:
+        """Assess emotional stability from shifts.
+
+        Args:
+            emotional_shifts: Dictionary of emotional changes
+
+        Returns:
+            Float between 0 and 1 indicating stability
+        """
         if not emotional_shifts:
-            return 0.0
+            return 1.0
 
         # Calculate average magnitude of emotional shifts
         total_shift = 0.0
-        count = 0
-        for shifts in emotional_shifts.values():
-            for shift in shifts.values():
-                total_shift += abs(shift)
-                count += 1
+        num_shifts = 0
 
-        avg_shift = total_shift / count if count > 0 else 0.0
+        for agent_shifts in emotional_shifts.values():
+            for shift in agent_shifts.values():
+                total_shift += abs(shift)
+                num_shifts += 1
+
+        avg_shift = total_shift / num_shifts if num_shifts > 0 else 0.0
 
         # Convert to stability score (lower shifts = higher stability)
-        return 1.0 - min(avg_shift, 1.0)
+        return max(0.0, 1.0 - avg_shift)
 
-    def _assess_decision_impact(
+    def _assess_emotional_impact(
         self,
-        winning_option: str,
-        emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]],
-        consensus_level: float,
+        supported_option: str,
+        emotional_shifts: Dict[str, Dict],
+        dissenting_agents: List[str],
     ) -> Dict[str, Any]:
-        """Assess the emotional impact of the decision."""
+        """Assess emotional impact of the decision.
+
+        Args:
+            supported_option: The selected option
+            emotional_shifts: Emotional changes during deliberation
+            dissenting_agents: List of dissenting agents
+
+        Returns:
+            Dictionary containing emotional impact assessment
+        """
         return {
-            "group_cohesion": self._calculate_group_cohesion(
-                emotional_shifts, consensus_level
-            ),
-            "emotional_state": self._calculate_group_emotional_state(emotional_shifts),
-            "resistance_level": 1.0 - consensus_level,
+            "resistance_level": len(dissenting_agents) / len(self.group.agents),
+            "group_cohesion": self._calculate_group_cohesion(emotional_shifts),
             "support_needs": self._identify_support_needs(
-                emotional_shifts, consensus_level
+                emotional_shifts, dissenting_agents
             ),
         }
 
-    def _calculate_group_cohesion(
-        self,
-        emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]],
-        consensus_level: float,
-    ) -> float:
-        """Calculate group cohesion level after decision."""
-        # Base cohesion on consensus
-        base_cohesion = consensus_level
+    def _calculate_group_cohesion(self, emotional_shifts: Dict[str, Dict]) -> float:
+        """Calculate group cohesion level.
 
-        # Adjust based on emotional alignment
-        emotional_alignment = self._calculate_emotional_alignment(emotional_shifts)
+        Args:
+            emotional_shifts: Emotional changes during deliberation
 
-        return 0.6 * base_cohesion + 0.4 * emotional_alignment
-
-    def _calculate_group_emotional_state(
-        self, emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]]
-    ) -> Dict[EmotionalState.Emotion, float]:
-        """Calculate final group emotional state."""
-        group_state = {emotion: 0.0 for emotion in EmotionalState.Emotion}
-
+        Returns:
+            Float between 0 and 1 indicating cohesion
+        """
         if not emotional_shifts:
-            return group_state
+            return 1.0
 
-        # Aggregate final emotional states
-        for shifts in emotional_shifts.values():
-            for emotion, shift in shifts.items():
-                group_state[emotion] += shift
+        # Calculate emotional alignment
+        emotions = {}
+        for agent_shifts in emotional_shifts.values():
+            dominant_emotion = max(agent_shifts.items(), key=lambda x: x[1])[0]
+            emotions[dominant_emotion] = emotions.get(dominant_emotion, 0) + 1
 
-        # Normalize
-        total = sum(abs(v) for v in group_state.values())
-        if total > 0:
-            for emotion in group_state:
-                group_state[emotion] /= total
-
-        return group_state
+        # Calculate proportion of agents sharing dominant emotion
+        max_aligned = max(emotions.values())
+        return max_aligned / len(emotional_shifts)
 
     def _identify_support_needs(
-        self,
-        emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]],
-        consensus_level: float,
+        self, emotional_shifts: Dict[str, Dict], dissenting_agents: List[str]
     ) -> List[str]:
-        """Identify needed support actions based on decision impact."""
-        support_needs = []
-
-        # Check for low consensus
-        if consensus_level < 0.6:
-            support_needs.append("consensus_building")
-
-        # Check for negative emotional shifts
-        negative_emotions = {
-            EmotionalState.Emotion.ANGRY,
-            EmotionalState.Emotion.ANXIOUS,
-            EmotionalState.Emotion.DEFENSIVE,
-        }
-
-        for shifts in emotional_shifts.values():
-            for emotion, shift in shifts.items():
-                if emotion in negative_emotions and shift > 0.3:
-                    support_needs.append("emotional_support")
-                    break
-
-        return list(set(support_needs))  # Remove duplicates
-
-    def _identify_dissenters(
-        self, winning_option: str, preferences: Dict[str, str]
-    ) -> List[str]:
-        """Identify agents who disagreed with the final decision."""
-        return [
-            agent_id
-            for agent_id, preference in preferences.items()
-            if preference != winning_option
-        ]
-
-    def _calculate_emotional_alignment(
-        self, emotional_shifts: Dict[str, Dict[EmotionalState.Emotion, float]]
-    ) -> float:
-        """Calculate emotional alignment between group members.
+        """Identify needed support mechanisms.
 
         Args:
-            emotional_shifts: Dictionary of emotional shifts for each agent
+            emotional_shifts: Emotional changes during deliberation
+            dissenting_agents: List of dissenting agents
 
         Returns:
-            Float between 0 and 1 indicating emotional alignment level
+            List of identified support needs
         """
-        if not emotional_shifts:
-            return 0.0
+        needs = []
 
-        # Get dominant emotions for each agent
-        dominant_emotions = {}
-        for agent_id, shifts in emotional_shifts.items():
-            # Find emotion with highest shift
-            dominant_emotion = max(shifts.items(), key=lambda x: abs(x[1]))[0]
-            dominant_emotions[agent_id] = dominant_emotion
+        # Check for consensus building need
+        if len(dissenting_agents) > len(self.group.agents) / 4:
+            needs.append("consensus_building")
 
-        # Calculate alignment score
-        alignment_score = 0.0
-        num_pairs = 0
+        # Check for emotional support need
+        negative_emotions = 0
+        for agent_shifts in emotional_shifts.values():
+            if any(shift < -0.3 for shift in agent_shifts.values()):
+                negative_emotions += 1
 
-        # Compare each pair of agents
-        agents = list(dominant_emotions.keys())
-        for i in range(len(agents)):
-            for j in range(i + 1, len(agents)):
-                agent1_id = agents[i]
-                agent2_id = agents[j]
+        if negative_emotions > len(self.group.agents) / 3:
+            needs.append("emotional_support")
 
-                # Check if emotions align
-                if dominant_emotions[agent1_id] == dominant_emotions[agent2_id]:
-                    # Add full alignment score
-                    alignment_score += 1.0
-                elif self._are_emotions_compatible(
-                    dominant_emotions[agent1_id], dominant_emotions[agent2_id]
-                ):
-                    # Add partial alignment score for compatible emotions
-                    alignment_score += 0.5
-
-                num_pairs += 1
-
-        # Return normalized alignment score
-        return alignment_score / num_pairs if num_pairs > 0 else 0.0
-
-    def _are_emotions_compatible(
-        self, emotion1: EmotionalState.Emotion, emotion2: EmotionalState.Emotion
-    ) -> bool:
-        """Determine if two emotions are compatible with each other.
-
-        Args:
-            emotion1: First emotion
-            emotion2: Second emotion
-
-        Returns:
-            Boolean indicating if emotions are compatible
-        """
-        # Define compatible emotion pairs
-        compatible_pairs = {
-            (EmotionalState.Emotion.HAPPY, EmotionalState.Emotion.CONFIDENT),
-            (EmotionalState.Emotion.ANXIOUS, EmotionalState.Emotion.DEFENSIVE),
-            (EmotionalState.Emotion.NEUTRAL, EmotionalState.Emotion.HAPPY),
-            (EmotionalState.Emotion.NEUTRAL, EmotionalState.Emotion.CONFIDENT),
-        }
-
-        # Check both orderings of the emotion pair
-        return (emotion1, emotion2) in compatible_pairs or (
-            emotion2,
-            emotion1,
-        ) in compatible_pairs
-
-    async def _process_decision_aftermath(self, decision: DecisionOutcome) -> None:
-        """Process the emotional aftermath of a group decision.
-
-        Args:
-            decision: The outcome of the group decision
-        """
-        # Update emotional states based on decision
-        await self._update_emotional_states(decision)
-
-        # Process relationship changes
-        self._process_relationship_changes(decision)
-
-        # Record learning outcomes
-        self._record_decision_learning(decision)
-
-    async def _update_emotional_states(self, decision: DecisionOutcome) -> None:
-        """Update agent emotional states based on decision outcome."""
-        for agent in self.group.agents:
-            # Check if agent was dissenting
-            is_dissenting = agent.id in decision.dissenting_agents
-
-            # Calculate emotional impact
-            if is_dissenting:
-                # Negative emotional impact for dissenters
-                agent.emotional_state.update_emotion(
-                    EmotionalState.Emotion.DEFENSIVE, intensity=0.7
-                )
-            else:
-                # Positive emotional impact for supporters
-                agent.emotional_state.update_emotion(
-                    EmotionalState.Emotion.HAPPY, intensity=0.6
-                )
-
-    def _process_relationship_changes(self, decision: DecisionOutcome) -> None:
-        """Process relationship changes based on decision outcome."""
-        for agent in self.group.agents:
-            for other in self.group.agents:
-                if agent != other:
-                    # Adjust relationships based on agreement/disagreement
-                    both_dissenting = (
-                        agent.id in decision.dissenting_agents
-                        and other.id in decision.dissenting_agents
-                    )
-                    both_supporting = (
-                        agent.id not in decision.dissenting_agents
-                        and other.id not in decision.dissenting_agents
-                    )
-
-                    if both_dissenting or both_supporting:
-                        # Strengthen relationship for aligned agents
-                        current = agent.relationships.get(other.id, 0.5)
-                        agent.relationships[other.id] = min(1.0, current + 0.1)
-                    else:
-                        # Weaken relationship for opposed agents
-                        current = agent.relationships.get(other.id, 0.5)
-                        agent.relationships[other.id] = max(0.0, current - 0.1)
-
-    def _record_decision_learning(self, decision: DecisionOutcome) -> None:
-        """Record learning outcomes from the decision process."""
-        # Record decision outcome and impact for future reference
-        self.decision_history.append(
-            {
-                "decision": decision.decision,
-                "confidence": decision.confidence,
-                "consensus_level": decision.consensus_level,
-                "emotional_impact": decision.emotional_impact,
-                "timestamp": len(self.decision_history),
-            }
-        )
+        return needs
 
 
 class EmotionalAftermath:
@@ -2478,42 +2675,126 @@ class AdvancedDeliberation:
     async def _gather_phase_contributions(
         self, prompts: List[str]
     ) -> List[Dict[str, Any]]:
-        """Gather contributions from all participants for the current phase.
-
-        Args:
-            prompts: List of prompts to use for gathering contributions
-
-        Returns:
-            List of contribution dictionaries containing responses and metadata
-        """
+        """Gather phase contributions with enhanced metadata and influence."""
         contributions = []
+
         for agent in self.group.agents:
             for prompt in prompts:
-                contribution = await self._get_agent_contribution(agent, prompt)
+                # Generate response considering personality and emotional state
+                response = await self._generate_agent_response(agent, prompt)
+
+                # Calculate contribution weight
+                weight = self._calculate_contribution_weight(agent)
+
+                # Record contribution with metadata
+                contribution = {
+                    "agent_id": agent.id,
+                    "response": response,
+                    "emotional_state": agent.emotional_state.get_dominant_emotion(),
+                    "influence_level": agent.status.influence,
+                    "contribution_weight": weight,
+                    "personality_factors": {
+                        "dominance": agent.personality.dominance,
+                        "agreeableness": agent.personality.agreeableness,
+                        "stability": agent.personality.stability,
+                    },
+                    "timestamp": len(self.phase_history),
+                    "relationship_context": self._get_relationship_context(agent),
+                }
+
                 contributions.append(contribution)
+
         return contributions
 
-    async def _get_agent_contribution(
-        self, agent: EnhancedSocialAgent, prompt: str
-    ) -> Dict[str, Any]:
-        """Get a single agent's contribution in response to a prompt.
+    def _calculate_contribution_weight(self, agent: EnhancedSocialAgent) -> float:
+        """Calculate the weight/importance of an agent's contribution.
 
         Args:
-            agent: The agent providing the contribution
-            prompt: The prompt to respond to
+            agent: The agent making the contribution
 
         Returns:
-            Dictionary containing the contribution and metadata
+            Float between 0 and 1 indicating contribution weight
         """
-        # Generate response using the agent's LLM interface
-        response = await agent.llm.generate(prompt)
+        # Base weight on status
+        status_weight = (
+            0.4 * agent.status.influence
+            + 0.3 * agent.status.respect
+            + 0.3 * agent.status.formal_rank
+        )
 
-        return {
-            "agent_id": agent.id,
-            "response": response,
-            "emotional_state": agent.emotional_state.get_dominant_emotion(),
-            "timestamp": len(self.phase_history),
-        }
+        # Adjust for personality factors
+        personality_modifier = (
+            0.4 * agent.personality.dominance
+            + 0.3 * agent.personality.extraversion
+            + 0.3 * agent.personality.stability
+        )
+
+        # Consider emotional state
+        emotion, intensity = agent.emotional_state.get_dominant_emotion()
+        emotional_modifier = 1.0
+        if emotion in {EmotionalState.Emotion.ANGRY, EmotionalState.Emotion.DEFENSIVE}:
+            emotional_modifier = 0.7  # Reduce weight for negative emotions
+        elif emotion == EmotionalState.Emotion.CONFIDENT:
+            emotional_modifier = 1.2  # Increase weight for confidence
+
+        return min(1.0, status_weight * personality_modifier * emotional_modifier)
+
+    def _get_relationship_context(self, agent: EnhancedSocialAgent) -> Dict[str, float]:
+        """Get the relationship context for an agent."""
+        context = {}
+        for other in self.group.agents:
+            if other.id != agent.id:
+                relationship_strength = agent.relationships.get(other.id, 0.5)
+                context[other.id] = relationship_strength
+        return context
+
+    async def _generate_agent_response(
+        self, agent: EnhancedSocialAgent, prompt: str
+    ) -> str:
+        """Generate a response based on agent's characteristics."""
+        # Consider emotional state
+        emotion, intensity = agent.emotional_state.get_dominant_emotion()
+
+        # Modify prompt based on emotional state and personality
+        modified_prompt = self._modify_prompt_for_agent(
+            agent, prompt, emotion, intensity
+        )
+
+        # Generate response using agent's LLM
+        response = await agent.llm.generate(modified_prompt)
+
+        return response
+
+    def _modify_prompt_for_agent(
+        self,
+        agent: EnhancedSocialAgent,
+        prompt: str,
+        emotion: EmotionalState.Emotion,
+        intensity: float,
+    ) -> str:
+        """Modify prompt based on agent's current state."""
+        # Add emotional context
+        emotional_context = (
+            f"\nCurrent emotional state: {emotion.value} (intensity: {intensity})"
+        )
+
+        # Add personality influence
+        personality_context = (
+            f"\nPersonality traits:"
+            f"\n- Dominance: {agent.personality.dominance}"
+            f"\n- Agreeableness: {agent.personality.agreeableness}"
+            f"\n- Stability: {agent.personality.stability}"
+        )
+
+        # Add status context
+        status_context = (
+            f"\nStatus factors:"
+            f"\n- Influence: {agent.status.influence}"
+            f"\n- Respect: {agent.status.respect}"
+            f"\n- Formal rank: {agent.status.formal_rank}"
+        )
+
+        return f"{prompt}\n{emotional_context}\n{personality_context}\n{status_context}"
 
     def _evaluate_phase_outcome(
         self, contributions: List[Dict], emotional_shifts: Dict

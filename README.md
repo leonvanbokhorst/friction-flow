@@ -166,6 +166,45 @@ This PoC investigates the relationship between individual stories and broader na
 - Efficient embedding caching
 - Detailed modification tracking and logging
 
+### Friction Flow Simulation CLI
+
+The Friction Flow Simulation CLI provides a command-line interface for running and analyzing narrative field simulations. Key features include:
+
+- Interactive simulation configuration
+- Real-time event monitoring and logging
+- Comprehensive metric tracking:
+  - Emotional intensity over time
+  - Group cohesion measurements
+  - Interaction frequency analysis
+- Automated visualization generation:
+  - Agent relationship networks
+  - Personality trait distributions
+  - Social role breakdowns
+- Detailed results export in JSON format:
+  - Event logs with timestamps
+  - Aggregated metrics and summaries
+  - Network state snapshots
+
+```mermaid
+sequenceDiagram
+    participant Agent as EnhancedSocialAgent
+    participant Proposal as DecisionProposal
+    participant Dynamics as esh_status_dynamics
+    Agent->>Dynamics: _calculate_initial_reaction(Proposal)
+    alt stability < 0.5
+        Dynamics->>Agent: ANXIOUS reaction
+    end
+    alt openness > 0.7
+        Dynamics->>Agent: CONFIDENT reaction
+    end
+    alt dominance > 0.7
+        Dynamics->>Agent: DEFENSIVE reaction
+    end
+    Dynamics->>Agent: Return reactions
+
+```
+
+
 ## Latest Experimental Results
 
 The recent experiments demonstrate several key findings:

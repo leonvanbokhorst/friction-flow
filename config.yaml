@@ -1,0 +1,12 @@
+agent_config:
+  emotional_decay_rate: 0.1
+  interaction_radius: 0.7
+  memory_span: 100
+  personality_variance: 0.2
+duration: 1000
+group_config:
+  cohesion_threshold: 0.6
+  max_groups: 10
+  min_group_size: 3
+num_agents: 50
+random_seed: null
