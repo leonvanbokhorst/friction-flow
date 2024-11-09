@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "friction-flow"
+version = "0.1.0"
+description = "Social simulation framework"
+authors = [{name = "Your Name"}]
+requires-python = ">=3.8"
+dependencies = [
+    "click>=8.0.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0",
+    "rich>=10.0.0"
+]
+
+[project.scripts]
+friction-flow = "friction_flow.cli.simulation_cli:cli"
