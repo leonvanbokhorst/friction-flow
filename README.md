@@ -204,6 +204,8 @@ sequenceDiagram
 
 ```
 
+![](simulation_results/visualizations/personalities.png)
+
 
 ## Latest Experimental Results
 
