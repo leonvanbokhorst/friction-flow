@@ -2,6 +2,10 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 import yaml
 from pathlib import Path
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AgentConfig(BaseModel):
     """Configuration for individual agents"""
@@ -50,6 +54,13 @@ class GroupConfig(BaseModel):
         description="Maximum number of groups allowed"
     )
 
+class ResultsConfig(BaseModel):
+    """Configuration for results storage"""
+    compression: bool = Field(default=False, description="Enable compression for result files")
+    backup_enabled: bool = Field(default=False, description="Enable automatic backups")
+    retention_days: int = Field(default=30, description="Number of days to retain results")
+    metrics_batch_size: int = Field(default=1000, description="Batch size for metric writes")
+
 class SimulationConfig(BaseModel):
     """Main simulation configuration"""
     
@@ -76,6 +87,10 @@ class SimulationConfig(BaseModel):
         default_factory=GroupConfig,
         description="Configuration for group dynamics"
     )
+    results_config: ResultsConfig = Field(
+        default_factory=ResultsConfig,
+        description="Configuration for results storage"
+    )
     
     @classmethod
     def from_yaml(cls, path: Path) -> "SimulationConfig":
@@ -83,3 +98,14 @@ class SimulationConfig(BaseModel):
         with open(path, 'r') as f:
             config_dict = yaml.safe_load(f)
         return cls.parse_obj(config_dict) 
+
+    def cleanup_old_results(self) -> None:
+        """Remove results older than retention period"""
+        retention_delta = timedelta(days=self.config.retention_days)
+        current_time = datetime.now()
+        
+        for result_file in self.output_dir.glob("*.json"):
+            file_time = datetime.fromtimestamp(result_file.stat().st_mtime)
+            if current_time - file_time > retention_delta:
+                result_file.unlink()
+                logger.info(f"Removed old result file: {result_file}")

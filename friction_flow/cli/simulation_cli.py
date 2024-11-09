@@ -13,6 +13,7 @@ from friction_flow.config.simulation_config import SimulationConfig
 from friction_flow.core.simulation_coordinator import SimulationCoordinator
 from friction_flow.inputs.agent_inputs import SimulationInputs
 from friction_flow.utils.input_visualizer import InputVisualizer
+from friction_flow.inputs.input_manager import InputManager
 
 console = Console()
 
@@ -71,15 +72,15 @@ async def _run_simulation(config: Path, inputs: Path, output: Path) -> None:
             config_dict = yaml.safe_load(f)
         sim_config = SimulationConfig.parse_obj(config_dict)
         
-        # Load inputs
+        # Load and validate inputs
         console.print("[bold blue]Loading inputs...[/]")
-        with open(inputs) as f:
-            input_dict = yaml.safe_load(f)
-        sim_inputs = SimulationInputs.parse_raw(json.dumps(input_dict))
+        input_manager = InputManager(inputs)
+        sim_inputs = input_manager.load_inputs()
         
-        # Create output directory
+        # Create output directory and visualizations
         output_dir = Path(output)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        vis_dir = output_dir / "visualizations"
+        input_manager.generate_visualizations(vis_dir)
         
         # Initialize simulation
         console.print("[bold blue]Initializing simulation...[/]")
@@ -177,6 +178,16 @@ def analyze(results_dir: Path) -> None:
         console.print(f"  Duration: {duration}")
         console.print(f"  Events/second: {len(events)/duration.total_seconds():.2f}")
         
+        console.print("\n[bold]Metric Correlations:[/]")
+        correlations = results_manager.analyze_metric_correlations()
+        for pair, corr in correlations.items():
+            console.print(f"  {pair}: {corr:.3f}")
+
+        console.print("\n[bold]Temporal Patterns:[/]")
+        patterns = results_manager.analyze_temporal_patterns()
+        for metric, pattern in patterns.items():
+            console.print(f"  {metric} trend: {pattern['trend']:.3f}")
+        
     except Exception as e:
         console.print(f"[bold red]Error analyzing results: {str(e)}[/]")
         raise click.ClickException(str(e))
@@ -220,23 +231,21 @@ def generate_inputs(num_agents: int, output: Path) -> None:
 def visualize_inputs(input_file: Path, output: Path) -> None:
     """Visualize simulation inputs"""
     try:
-        # Load inputs
-        with open(input_file) as f:
-            input_dict = yaml.safe_load(f)
-        inputs = SimulationInputs.parse_obj(input_dict)
+        console.print("[bold blue]Loading and visualizing inputs...[/]")
         
-        # Create output directory
-        output_dir = Path(output)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Use InputManager to handle everything
+        input_manager = InputManager(input_file)
+        input_manager.load_inputs()
+        input_manager.generate_visualizations(Path(output))
         
-        # Create visualizations
-        visualizer = InputVisualizer(inputs)
-        visualizer.create_network_graph(output_dir / "network.png")
-        
-        console.print(f"[bold green]Visualizations saved to: {output_dir}[/]")
+        console.print(f"[bold green]Visualizations created in: {output}[/]")
+        console.print("\nGenerated visualizations:")
+        console.print("  - Network graph (network.png)")
+        console.print("  - Personality distributions (personalities.png)")
+        console.print("  - Role distributions (roles.png)")
         
     except Exception as e:
-        console.print(f"[bold red]Error: {str(e)}[/]")
+        console.print(f"[bold red]Error visualizing inputs: {str(e)}[/]")
         raise click.ClickException(str(e))
 
 if __name__ == '__main__':

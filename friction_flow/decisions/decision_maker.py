@@ -51,23 +51,57 @@ class DecisionMaker(Observable):
         emotional_state: EmotionalState
     ) -> float:
         """Calculate how well an option aligns with current emotional state"""
-        dominant_emotion, intensity = emotional_state.get_dominant_emotion()
+        # Extract option characteristics
+        valence_alignment = 1 - abs(
+            option.get('expected_valence', 0.5) - emotional_state.valence
+        )
+        arousal_alignment = 1 - abs(
+            option.get('expected_arousal', 0.5) - emotional_state.arousal
+        )
         
-        # Map emotions to decision-making tendencies
-        emotion_weights = {
-            EmotionalState.Emotion.HAPPY: {'risk_tolerance': 0.7, 'cooperation': 0.8},
-            EmotionalState.Emotion.ANGRY: {'risk_tolerance': 0.8, 'cooperation': 0.3},
-            EmotionalState.Emotion.ANXIOUS: {'risk_tolerance': 0.2, 'cooperation': 0.5},
-            EmotionalState.Emotion.CONFIDENT: {'risk_tolerance': 0.9, 'cooperation': 0.6},
-            EmotionalState.Emotion.DEFENSIVE: {'risk_tolerance': 0.3, 'cooperation': 0.4},
-            EmotionalState.Emotion.NEUTRAL: {'risk_tolerance': 0.5, 'cooperation': 0.5}
+        return (valence_alignment + arousal_alignment) / 2
+        
+    def _calculate_personality_fit(
+        self,
+        option: Dict[str, Any],
+        personality_factors: Dict[str, float]
+    ) -> float:
+        """Calculate how well an option fits with personality"""
+        trait_weights = {
+            'openness': option.get('novelty', 0.5),
+            'conscientiousness': option.get('structure', 0.5),
+            'extraversion': option.get('social_engagement', 0.5),
+            'agreeableness': option.get('cooperation', 0.5),
+            'neuroticism': option.get('risk', 0.5)
         }
         
-        weights = emotion_weights[dominant_emotion]
-        option_risk = option.get('risk_level', 0.5)
-        option_cooperation = option.get('cooperation_required', 0.5)
+        weighted_sum = sum(
+            personality_factors.get(trait, 0.5) * weight
+            for trait, weight in trait_weights.items()
+        )
+        return weighted_sum / len(trait_weights)
         
-        return 1 - (
-            abs(weights['risk_tolerance'] - option_risk) +
-            abs(weights['cooperation'] - option_cooperation)
-        ) / 2 
+    def _evaluate_context_fit(
+        self,
+        option: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> float:
+        """Evaluate how well an option fits the current context"""
+        context_factors = {
+            'time_pressure': context.get('time_pressure', 0.5),
+            'social_support': context.get('social_support', 0.5),
+            'risk_level': context.get('risk_level', 0.5)
+        }
+        
+        option_requirements = {
+            'time_pressure': option.get('urgency', 0.5),
+            'social_support': option.get('support_needed', 0.5),
+            'risk_level': option.get('risk_tolerance', 0.5)
+        }
+        
+        fit_scores = [
+            1 - abs(context_factors[factor] - option_requirements[factor])
+            for factor in context_factors.keys()
+        ]
+        
+        return sum(fit_scores) / len(fit_scores)
