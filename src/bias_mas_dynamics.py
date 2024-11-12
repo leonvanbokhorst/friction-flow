@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from ollama import Client
 import asyncio
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import logging
 
 # Configure logging
@@ -21,6 +21,16 @@ class SocialAgent(nn.Module):
         is_influencer=False,
         confirmation_bias_strength=0.5,
     ):
+        """
+        Initialize a SocialAgent with psychological and social attributes.
+
+        Args:
+            initial_bias (float): The initial bias level of the agent.
+            susceptibility (float): How susceptible the agent is to influence.
+            stubbornness (float): How resistant the agent is to change.
+            is_influencer (bool): Whether the agent is an influencer.
+            confirmation_bias_strength (float): Strength of confirmation bias.
+        """
         super().__init__()
         self.bias = nn.Parameter(torch.tensor(initial_bias, dtype=torch.float))
         self.susceptibility = susceptibility
@@ -69,7 +79,15 @@ class SocialAgent(nn.Module):
         self.uncertainty = nn.Parameter(torch.rand(1))
 
     def calculate_confirmation_bias(self, social_influence):
-        """Calculate how much the agent accepts/rejects information based on current bias"""
+        """
+        Calculate the confirmation bias effect on social influence acceptance.
+
+        Args:
+            social_influence (float): The influence from social interactions.
+
+        Returns:
+            float: The acceptance rate after applying confirmation bias.
+        """
         bias_difference = abs(self.bias.item() - social_influence)
         acceptance_rate = 1.0 - (bias_difference * self.confirmation_bias_strength)
         return max(0.1, min(1.0, acceptance_rate))  # Clamp between 0.1 and 1.0
@@ -77,6 +95,14 @@ class SocialAgent(nn.Module):
     def update_emotional_state(
         self, social_influence, neighboring_emotions=None, crisis_intensity=0
     ):
+        """
+        Update the emotional state of the agent based on various factors.
+
+        Args:
+            social_influence (float): Influence from social interactions.
+            neighboring_emotions (torch.Tensor, optional): Emotions of neighbors.
+            crisis_intensity (float, optional): Intensity of a crisis event.
+        """
         # Update emotion based on social influence, neighbors, and crisis
         delta = abs(self.bias.item() - social_influence)
 
@@ -105,6 +131,17 @@ class SocialAgent(nn.Module):
             self.trauma_memories.append((crisis_intensity, 0))  # (intensity, age)
 
     def forward(self, social_influence, new_information, external_influence):
+        """
+        Forward pass to update agent's bias based on inputs.
+
+        Args:
+            social_influence (float): Influence from social interactions.
+            new_information (float): New information affecting the agent.
+            external_influence (float): External influence on the agent.
+
+        Returns:
+            torch.Tensor: The decision output from the belief network.
+        """
         self.update_emotional_state(social_influence)
         # Modify susceptibility based on emotional state
         effective_susceptibility = self.susceptibility * (
@@ -160,13 +197,27 @@ class SocialAgent(nn.Module):
         return decision
 
     def calculate_bias_impact(self, other_bias):
-        """Calculate the impact of this agent's bias on another agent"""
+        """
+        Calculate the impact of this agent's bias on another agent.
+
+        Args:
+            other_bias (float): The bias of another agent.
+
+        Returns:
+            float: The calculated impact.
+        """
         bias_diff = abs(self.bias.item() - other_bias)
         impact = (1 - bias_diff) * self.influence_strength
         return impact
 
     def record_influence(self, influence_value, source_bias):
-        """Record received influence and its source"""
+        """
+        Record the influence received and its source.
+
+        Args:
+            influence_value (float): The value of the influence received.
+            source_bias (float): The bias of the source of influence.
+        """
         self.received_influences.append(
             {
                 "value": influence_value,
@@ -176,7 +227,12 @@ class SocialAgent(nn.Module):
         )
 
     def analyze_individual_bias(self):
-        """Analyze individual agent bias patterns"""
+        """
+        Analyze the bias patterns of individual agents.
+
+        Returns:
+            dict: A dictionary containing bias-related metrics.
+        """
         return {
             'bias_values': [float(agent.bias.item()) for agent in self.agents],
             'susceptibility': [float(agent.susceptibility) for agent in self.agents],
@@ -193,6 +249,15 @@ class SocialNetwork:
         num_echo_chambers=2,
         num_bridge_builders=2,
     ):
+        """
+        Initialize a SocialNetwork with agents and their connections.
+
+        Args:
+            num_agents (int): Total number of agents in the network.
+            num_influencers (int): Number of influencer agents.
+            num_echo_chambers (int): Number of echo chambers.
+            num_bridge_builders (int): Number of bridge builders.
+        """
         self.num_echo_chambers = num_echo_chambers
         self.num_bridge_builders = num_bridge_builders
         self.num_base_agents = num_agents  # Store original number of agents
@@ -263,7 +328,13 @@ class SocialNetwork:
         self.crisis_end = None
 
     def add_bridge_builder_connections(self, builder_idx, chambers):
-        """Add connections for bridge builders to their chosen chambers"""
+        """
+        Add connections for bridge builders to selected chambers.
+
+        Args:
+            builder_idx (int): Index of the bridge builder agent.
+            chambers (list): List of chamber indices to connect.
+        """
         agents_per_chamber = (self.num_base_agents - 2) // self.num_echo_chambers
 
         # For each chamber this bridge builder connects to
@@ -286,7 +357,14 @@ class SocialNetwork:
     def create_echo_chamber_connections(
         self, num_agents, agents_per_chamber, num_influencers
     ):
-        """Create connection matrix with echo chambers and influencers"""
+        """
+        Create connections within and between echo chambers.
+
+        Args:
+            num_agents (int): Total number of agents.
+            agents_per_chamber (int): Number of agents per chamber.
+            num_influencers (int): Number of influencer agents.
+        """
         # Only create connections for the base agents initially
         for chamber in range(self.num_echo_chambers):
             start_idx = chamber * agents_per_chamber
@@ -323,7 +401,14 @@ class SocialNetwork:
         self.connections = self.connections / row_sums
 
     def trigger_crisis(self, intensity, duration, target_chamber=None):
-        """Initiate a crisis event"""
+        """
+        Initiate a crisis event affecting the network.
+
+        Args:
+            intensity (float): Intensity of the crisis.
+            duration (int): Duration of the crisis in time steps.
+            target_chamber (int, optional): Specific chamber affected.
+        """
         self.current_crisis = {
             "intensity": intensity,
             "duration": duration,
@@ -333,7 +418,15 @@ class SocialNetwork:
         self.crisis_history.append(self.current_crisis)
 
     def simulate_step(self, time_step):
-        """Enhanced simulation step with crisis and emotional contagion"""
+        """
+        Perform a simulation step, updating agent states.
+
+        Args:
+            time_step (int): The current time step in the simulation.
+
+        Returns:
+            torch.Tensor: Updated biases of all agents.
+        """
         current_biases = torch.tensor([agent.bias.item() for agent in self.agents])
         current_emotions = torch.tensor(
             [agent.emotional_state.item() for agent in self.agents]
@@ -373,7 +466,15 @@ class SocialNetwork:
         return torch.tensor(new_biases)
 
     def run_simulation(self, steps=100):
-        """Run simulation with enhanced tracking"""
+        """
+        Run the simulation for a specified number of steps.
+
+        Args:
+            steps (int): Number of simulation steps to run.
+
+        Returns:
+            torch.Tensor: History of biases over time.
+        """
         bias_history = []
         self.bias_history = []  # Store for crisis analysis
         
@@ -390,7 +491,9 @@ class SocialNetwork:
         return torch.stack(bias_history)
 
     def visualize_network(self):
-        """Create a network visualization using networkx"""
+        """
+        Visualize the social network structure using networkx.
+        """
         G = nx.DiGraph()
 
         # Add nodes
@@ -445,7 +548,12 @@ class SocialNetwork:
         plt.show()
 
     def plot_simulation(self, bias_history):
-        """Enhanced plotting with echo chamber and influencer highlighting"""
+        """
+        Plot the evolution of agent biases over time.
+
+        Args:
+            bias_history (torch.Tensor): History of biases over time.
+        """
         plt.figure(figsize=(15, 8))
 
         # Calculate agents per chamber
@@ -485,7 +593,12 @@ class SocialNetwork:
         plt.show()
 
     def add_bridge_builders(self, num_bridge_builders):
-        """Add agents with connections to multiple chambers"""
+        """
+        Add bridge builder agents to the network.
+
+        Args:
+            num_bridge_builders (int): Number of bridge builders to add.
+        """
         for i in range(num_bridge_builders):
             # Select random chambers to bridge
             chambers = np.random.choice(self.num_echo_chambers, 2, replace=False)
@@ -505,7 +618,12 @@ class SocialNetwork:
             self.add_bridge_builder_connections(len(self.agents) - 1, chambers)
 
     def analyze_individual_bias(self):
-        """Analyze individual agent bias patterns"""
+        """
+        Analyze individual agent bias patterns.
+
+        Returns:
+            dict: A dictionary containing bias-related metrics.
+        """
         return {
             'bias_values': [float(agent.bias.item()) for agent in self.agents],
             'susceptibility': [float(agent.susceptibility) for agent in self.agents],
@@ -514,7 +632,15 @@ class SocialNetwork:
         }
 
     def analyze_bias_evolution(self, bias_history):
-        """Analyze how biases change over time"""
+        """
+        Analyze how biases change over time.
+
+        Args:
+            bias_history (torch.Tensor): History of biases over time.
+
+        Returns:
+            dict: A dictionary containing temporal metrics.
+        """
         return {
             'convergence_rate': float(calculate_convergence(bias_history)),
             'stability_metrics': self.analyze_network_stability(),
@@ -523,7 +649,15 @@ class SocialNetwork:
         }
 
     def track_opinion_shifts(self, bias_history):
-        """Track major changes in opinions over time"""
+        """
+        Track major changes in opinions over time.
+
+        Args:
+            bias_history (torch.Tensor): History of biases over time.
+
+        Returns:
+            list: A list of significant opinion shifts.
+        """
         shifts = []
         for t in range(1, len(bias_history)):
             shift = torch.mean(torch.abs(bias_history[t] - bias_history[t-1]))
@@ -532,7 +666,15 @@ class SocialNetwork:
         return shifts
 
     def identify_critical_points(self, bias_history):
-        """Identify points where significant changes occurred"""
+        """
+        Identify points where significant changes occurred.
+
+        Args:
+            bias_history (torch.Tensor): History of biases over time.
+
+        Returns:
+            list: A list of critical points with variance peaks.
+        """
         critical_points = []
         variance_history = [float(torch.var(biases)) for biases in bias_history]
         
@@ -546,7 +688,12 @@ class SocialNetwork:
         return critical_points
 
     def analyze_crisis_response(self):
-        """Analyze network response to crisis events"""
+        """
+        Analyze network response to crisis events.
+
+        Returns:
+            dict: A dictionary containing crisis response metrics.
+        """
         if not hasattr(self, 'bias_history') or self.crisis_start is None:
             return {
                 'pre_crisis_variance': None,
@@ -567,7 +714,12 @@ class SocialNetwork:
         }
 
     def calculate_recovery_time(self):
-        """Calculate how long it takes for the network to stabilize after crisis"""
+        """
+        Calculate how long it takes for the network to stabilize after a crisis.
+
+        Returns:
+            int: The recovery time in time steps.
+        """
         if not hasattr(self, 'bias_history') or self.crisis_end is None:
             return None
             
@@ -582,7 +734,12 @@ class SocialNetwork:
         return len(post_crisis)  # If never recovered
 
     def analyze_network_stability(self):
-        """Analyze network stability over time"""
+        """
+        Analyze network stability over time.
+
+        Returns:
+            dict: A dictionary containing stability metrics.
+        """
         stability_metrics = {
             'variance_trend': [],
             'convergence_speed': [],
@@ -601,7 +758,9 @@ class SocialNetwork:
         return stability_metrics
 
     def visualize_bias_spread(self):
-        """Visualize the spread of bias across the network"""
+        """
+        Visualize the spread of bias across the network.
+        """
         plt.figure(figsize=(10, 6))
         biases = [agent.bias.item() for agent in self.agents]
         plt.hist(biases, bins=20, alpha=0.7)
@@ -612,7 +771,12 @@ class SocialNetwork:
         plt.show()
 
     def analyze_group_dynamics(self):
-        """Analyze bias patterns at the echo chamber level"""
+        """
+        Analyze bias patterns at the echo chamber level.
+
+        Returns:
+            dict: A dictionary containing chamber-level metrics.
+        """
         chamber_metrics = {}
         agents_per_chamber = (self.num_base_agents - 2) // self.num_echo_chambers
         
@@ -633,18 +797,40 @@ class SocialNetwork:
         return chamber_metrics
 
     def calculate_chamber_isolation(self, start_idx, end_idx):
-        """Calculate how isolated an echo chamber is"""
+        """
+        Calculate how isolated an echo chamber is.
+
+        Args:
+            start_idx (int): Start index of the chamber.
+            end_idx (int): End index of the chamber.
+
+        Returns:
+            float: The isolation metric of the chamber.
+        """
         chamber_connections = self.connections[start_idx:end_idx, :]
         internal_connections = chamber_connections[:, start_idx:end_idx].sum()
         total_connections = chamber_connections.sum()
         return float(internal_connections / total_connections if total_connections > 0 else 0)
 
     def measure_external_resistance(self, chamber_agents):
-        """Measure how resistant the chamber is to external influence"""
+        """
+        Measure how resistant the chamber is to external influence.
+
+        Args:
+            chamber_agents (list): List of agents in the chamber.
+
+        Returns:
+            float: The resistance metric of the chamber.
+        """
         return float(np.mean([agent.stubbornness for agent in chamber_agents]))
 
     def measure_polarization(self):
-        """Measure network polarization using multiple metrics"""
+        """
+        Measure network polarization using multiple metrics.
+
+        Returns:
+            dict: A dictionary containing polarization metrics.
+        """
         # Get current biases
         biases = torch.tensor([agent.bias.item() for agent in self.agents])
         
@@ -682,7 +868,12 @@ class SocialNetwork:
         }
 
     def analyze_bridge_effectiveness(self):
-        """Analyze the effectiveness of bridge builders in connecting echo chambers"""
+        """
+        Analyze the effectiveness of bridge builders in connecting echo chambers.
+
+        Returns:
+            dict: A dictionary containing bridge effectiveness metrics.
+        """
         bridge_metrics = {}
         
         # Identify bridge builders
@@ -728,7 +919,12 @@ class SocialNetwork:
         }
 
     def test_network_resilience(self):
-        """Test the network's resilience to crises and external influences"""
+        """
+        Test the network's resilience to crises and external influences.
+
+        Returns:
+            dict: A dictionary containing resilience metrics.
+        """
         resilience_metrics = {
             'pre_crisis_variance': None,
             'crisis_variance': None,
@@ -751,15 +947,31 @@ class SocialNetwork:
         return resilience_metrics
 
 
-def calculate_convergence(bias_history):
-    """Calculate how quickly the network converges"""
+def calculate_convergence(bias_history: torch.Tensor) -> float:
+    """
+    Calculate how quickly the network converges.
+
+    Args:
+        bias_history (torch.Tensor): History of biases over time.
+
+    Returns:
+        float: The convergence rate of the network.
+    """
     final_variance = torch.var(bias_history[-1])
     initial_variance = torch.var(bias_history[0])
     return 1 - (final_variance / initial_variance)
 
 
-def run_comparative_analysis(num_trials=5):
-    """Run multiple trials comparing crisis vs no-crisis scenarios"""
+def run_comparative_analysis(num_trials: int = 5) -> Dict[str, List[float]]:
+    """
+    Run multiple trials comparing crisis vs no-crisis scenarios.
+
+    Args:
+        num_trials (int): Number of trials to run.
+
+    Returns:
+        dict: A dictionary containing variance and convergence metrics.
+    """
     results = {
         "crisis_variance": [],
         "normal_variance": [],
@@ -819,7 +1031,16 @@ def run_comparative_analysis(num_trials=5):
 
 
 def analyze_bridge_impact(bridge_counts=[0, 2, 4, 6], num_trials=3):
-    """Analyze the impact of different numbers of bridge builders"""
+    """
+    Analyze the impact of different numbers of bridge builders.
+
+    Args:
+        bridge_counts (list): List of bridge builder counts to test.
+        num_trials (int): Number of trials per bridge count.
+
+    Returns:
+        dict: A dictionary containing convergence and variance metrics.
+    """
     results = {"bridge_count": [], "convergence": [], "final_variance": []}
 
     for bridges in bridge_counts:
@@ -877,50 +1098,63 @@ def analyze_bridge_impact(bridge_counts=[0, 2, 4, 6], num_trials=3):
 
 class SimulationAnalyzer:
     def __init__(self, model_name: str = "hermes3:latest"):
+        """
+        Initialize the SimulationAnalyzer with a specified LLM model.
+
+        Args:
+            model_name (str): The name of the LLM model to use.
+        """
         self.client = Client(host="http://localhost:11434")
         self.model = model_name
 
     async def analyze_results(self, simulation_data: Dict[str, Any]) -> str:
-        """Analyze simulation results using Ollama LLM with enhanced storytelling"""
-
-        # Log the simulation data
-        logging.info("Simulation Data: %s", simulation_data)
-
-        # Format the simulation data into a narrative-focused prompt
-        prompt = f"""You are a social network researcher analyzing a fascinating simulation of bias dynamics in social networks. 
-        Tell a compelling story about what happened in this simulation, using the following data:
-
-        Individual Dynamics:
-        - Bias Distribution: {simulation_data['individual_metrics']['bias_values']}
-        - Emotional States: {simulation_data['individual_metrics']['emotional_state']}
-        - Susceptibility Patterns: {simulation_data['individual_metrics']['susceptibility']}
-
-        Group Behavior:
-        - Echo Chamber Metrics: {simulation_data['group_metrics']}
-        - Polarization Index: {simulation_data['network_metrics']['overall_variance']}
-        - Bridge Builder Impact: {simulation_data['bridge_builder_metrics']}
-
-        Temporal Evolution:
-        - Convergence Rate: {simulation_data['temporal_metrics']['convergence_rate']}
-        - Critical Points: {simulation_data['temporal_metrics']['critical_points']}
-        - Opinion Shifts: {simulation_data['temporal_metrics']['opinion_shifts']}
-
-        Crisis Impact:
-        - Pre/Post Crisis Changes: {simulation_data['crisis_metrics']}
-        - Network Resilience: {simulation_data['resilience_metrics']}
-
-        Please weave these findings into an engaging narrative that explains:
-        1. How did individual biases evolve and influence each other?
-        2. What role did echo chambers play in the network?
-        3. How effective were bridge builders in reducing polarization?
-        4. What happened during crisis events?
-        5. What lessons can we learn about managing bias in social networks?
-
-        Frame this as a story about how ideas and beliefs spread through our social networks, 
-        using concrete examples from the data to illustrate key points.
         """
+        Analyze simulation results using an LLM with enhanced storytelling.
 
+        Args:
+            simulation_data (dict): The data from the simulation to analyze.
+
+        Returns:
+            str: A narrative analysis of the simulation results.
+        """
         try:
+            # Log the simulation data
+            logging.info("Simulation Data: %s", simulation_data)
+
+            # Format the simulation data into a narrative-focused prompt
+            prompt = f"""You are a social network researcher analyzing a fascinating simulation of bias dynamics in social networks. 
+            Tell a compelling story about what happened in this simulation, using the following data:
+
+            Individual Dynamics:
+            - Bias Distribution: {simulation_data['individual_metrics']['bias_values']}
+            - Emotional States: {simulation_data['individual_metrics']['emotional_state']}
+            - Susceptibility Patterns: {simulation_data['individual_metrics']['susceptibility']}
+
+            Group Behavior:
+            - Echo Chamber Metrics: {simulation_data['group_metrics']}
+            - Polarization Index: {simulation_data['network_metrics']['overall_variance']}
+            - Bridge Builder Impact: {simulation_data['bridge_builder_metrics']}
+
+            Temporal Evolution:
+            - Convergence Rate: {simulation_data['temporal_metrics']['convergence_rate']}
+            - Critical Points: {simulation_data['temporal_metrics']['critical_points']}
+            - Opinion Shifts: {simulation_data['temporal_metrics']['opinion_shifts']}
+
+            Crisis Impact:
+            - Pre/Post Crisis Changes: {simulation_data['crisis_metrics']}
+            - Network Resilience: {simulation_data['resilience_metrics']}
+
+            Please weave these findings into an engaging narrative that explains:
+            1. How did individual biases evolve and influence each other?
+            2. What role did echo chambers play in the network?
+            3. How effective were bridge builders in reducing polarization?
+            4. What happened during crisis events?
+            5. What lessons can we learn about managing bias in social networks?
+
+            Frame this as a story about how ideas and beliefs spread through our social networks, 
+            using concrete examples from the data to illustrate key points.
+            """
+
             response = self.client.generate(
                 model=self.model,
                 prompt=prompt,
@@ -929,10 +1163,16 @@ class SimulationAnalyzer:
             )
             return response["response"]
         except Exception as e:
+            logging.error("Error analyzing results: %s", str(e))
             return f"Error analyzing results: {str(e)}"
 
-def run_comprehensive_simulation():
-    """Run a comprehensive simulation with all analysis metrics"""
+def run_comprehensive_simulation() -> Tuple[Dict[str, Any], str]:
+    """
+    Run a comprehensive simulation with all analysis metrics.
+
+    Returns:
+        tuple: A tuple containing the simulation data and narrative.
+    """
     network = SocialNetwork(
         num_agents=12,
         num_influencers=2,
