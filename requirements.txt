@@ -1,18 +1,40 @@
-ollama
-chromadb
-llama-cpp-python
+# Core dependencies
 numpy   
 appdirs 
 pydantic
 psutil
-torch
+
+# Testing
 pytest
 pytest-asyncio
 pytest-mock
+
+# ML & LLM
+ollama
+chromadb
+llama-cpp-python
 transformers
 PyWavelets
 scikit-learn
 sentence-transformers
 wandb
+
+# Visualization
 matplotlib
 seaborn
+pydot
+pygraphviz
+
+# PyTorch ecosystem - install these first
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch
+torchvision
+torchaudio
+
+# PyTorch Geometric dependencies - install these after PyTorch
+torch-geometric
+torch-scatter
+torch-sparse
+torch-cluster
+torch-spline-conv
+torch-geometric-temporal

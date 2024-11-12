@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import r2_score
 import logging
-import wandb  # Optional: for experiment tracking
-from collections import defaultdict
+import os
+import tempfile
 
 import torch
 import torch.nn as nn
@@ -221,6 +221,13 @@ class MetaModelGenerator(nn.Module):
     ):
         """Enhanced visualization with feature importance and learning curves"""
         try:
+            # Create results directory in project root
+            results_dir = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 
+                'maml_results'
+            )
+            os.makedirs(results_dir, exist_ok=True)
+
             plt.figure(figsize=(20, 5))
 
             # Plot 1: Predictions
@@ -299,7 +306,7 @@ class MetaModelGenerator(nn.Module):
                         f"Adaptation Improvement: {((F.mse_loss(initial_pred, query_y) - F.mse_loss(adapted_pred, query_y)) / F.mse_loss(initial_pred, query_y) * 100):.1f}%")
 
             plt.tight_layout()
-            save_path = f'adaptation_plot_{task_name.replace(" ", "_")}.png'
+            save_path = os.path.join(results_dir, f'adaptation_plot_{task_name.replace(" ", "_")}.png')
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             logger.info(f"Saved visualization to {save_path}")
             return plt.gcf()
