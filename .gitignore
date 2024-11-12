@@ -3,6 +3,10 @@ models/
 logs/
 .log
 *.log*  
+inputs.yaml
+config.yaml
+simulation_results/
+maml_results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
