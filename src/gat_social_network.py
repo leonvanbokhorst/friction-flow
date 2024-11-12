@@ -5,7 +5,7 @@ import logging
 import networkx as nx
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATConv
+from torch_geometric.nn import GATConv  # Changed from GCNConv
 from torch_geometric.data import Data
 import matplotlib.pyplot as plt
 
@@ -78,10 +78,11 @@ class RelationshipGraph:
         # GAT layer: Each head learns different aspects of relationships
         # Output dim per head is hidden_dim // num_heads to maintain constant total dimensions
         self.gat_layer = GATConv(
-            hidden_dim,
-            hidden_dim // num_heads,
+            in_channels=hidden_dim,
+            out_channels=hidden_dim // num_heads,
             heads=num_heads,
-            concat=True,  # Concatenate outputs from different heads
+            concat=True,
+            dropout=0.0  # Optional: Add dropout for regularization
         ).to(device)
 
     def add_agent(self, agent: AgentNode) -> None:
