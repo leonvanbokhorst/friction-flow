@@ -6,6 +6,10 @@ import networkx as nx
 from ollama import Client
 import asyncio
 from typing import Dict, List, Any
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class SocialAgent(nn.Module):
@@ -879,6 +883,9 @@ class SimulationAnalyzer:
     async def analyze_results(self, simulation_data: Dict[str, Any]) -> str:
         """Analyze simulation results using Ollama LLM with enhanced storytelling"""
 
+        # Log the simulation data
+        logging.info("Simulation Data: %s", simulation_data)
+
         # Format the simulation data into a narrative-focused prompt
         prompt = f"""You are a social network researcher analyzing a fascinating simulation of bias dynamics in social networks. 
         Tell a compelling story about what happened in this simulation, using the following data:
@@ -927,10 +934,10 @@ class SimulationAnalyzer:
 def run_comprehensive_simulation():
     """Run a comprehensive simulation with all analysis metrics"""
     network = SocialNetwork(
-        num_agents=450,
-        num_influencers=26,
-        num_echo_chambers=4,
-        num_bridge_builders=6
+        num_agents=12,
+        num_influencers=2,
+        num_echo_chambers=2,
+        num_bridge_builders=1
     )
 
     # Collect initial metrics
