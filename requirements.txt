@@ -25,16 +25,8 @@ seaborn
 pydot
 pygraphviz
 
-# PyTorch ecosystem - install these first
---find-links https://download.pytorch.org/whl/torch_stable.html
+# PyTorch ecosystem 
 torch
 torchvision
 torchaudio
-
-# PyTorch Geometric dependencies - install these after PyTorch
 torch-geometric
-torch-scatter
-torch-sparse
-torch-cluster
-torch-spline-conv
-torch-geometric-temporal
