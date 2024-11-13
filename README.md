@@ -24,63 +24,97 @@ Friction Flow is an advanced Python-based research project aimed at developing a
 - **Ollama**: For local LLM integration
 - **ChromaDB**: For vector storage and similarity search
 
-## Getting Started
-
-1. Clone the repository:
-
-   ```bash
-   git clone https://github.com/leonvanbokhorst/friction-flow
-   cd friction-flow
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Set up the environment:
-   - Ensure you have the necessary language models and embeddings set up as specified in `src/config.py`
-
-4. Run the demo:
-
-   ```bash
-   python src/gat_social_network.py
-   ```
-
 ## Core Components
 
-### Social Network Analysis (gat_social_network.py)
-
-Reference to implementation:
-
-Key features:
+### 1. Social Network Analysis (gat_social_network.py)
 
 - Graph Attention Network (GAT) for relationship modeling
 - Multi-head attention mechanisms
 - Community detection using Louvain method
 - Real-time visualization of social dynamics
 - Comprehensive metrics tracking
+- Classroom social dynamics demonstration
 
-### Meta-Learning Framework (maml_model_agnostic_meta_learning.py)
-
-Reference to implementation:
-
-Key features:
+### 2. Meta-Learning Framework (maml_model_agnostic_meta_learning.py)
 
 - Model-Agnostic Meta-Learning (MAML) implementation
 - Adaptive learning rate scheduling
 - Skip connections for improved gradient flow
 - Comprehensive visualization capabilities
 - Task-specific adaptation
+- Enhanced visualization with feature importance analysis
 
-### Narrative Field Dynamics
+### 3. Narrative Field Dynamics
 
 The project implements three core approaches to narrative field dynamics:
 
-1. **Story Waves**: Quantum-inspired approach to modeling narrative dynamics
-2. **Three Story Evolution**: Detailed evolution of interacting stories with emotional states
-3. **Simple Lab Scenario**: Practical application in simulated environments
+#### Story Waves
+
+- Quantum-inspired approach to modeling narrative dynamics
+- Resonance level tracking
+- Theme interaction analysis
+- Emotional impact measurement
+
+#### Three Story Evolution
+
+- Detailed evolution of interacting stories with emotional states
+- Story state management with resonance tracking
+- Memory-based updating mechanism
+- Collective story emergence analysis
+
+#### Simple Lab Scenario
+
+- Practical application in simulated environments
+- Real-world interaction modeling
+- Team dynamics simulation
+- Ethics and mental health integration
+
+### 4. Belief Systems (bayes_updating.py)
+
+- Bayesian belief updating using LLM embeddings
+- Dynamic confidence tracking
+- Historical state maintenance
+- Time-based decay modeling
+- Visualization of belief evolution
+
+### 5. Deep Learning Components
+
+#### Deep Belief Networks (DBN)
+
+- MNIST demonstration implementation
+- Hierarchical feature learning
+- Layer-wise pretraining
+- Comprehensive visualization tools
+
+#### Hopfield Networks
+
+- Pattern recognition and completion
+- Associative memory demonstration
+- Modern attention-like mechanisms
+- Quantum-inspired dynamics
+
+## Experimental Results
+
+### 1. Social Network Analysis
+
+- Successfully modeled classroom dynamics with 5+ distinct personality types
+- Detected natural community formations
+- Tracked influence pathways between agents
+- Visualized relationship networks and evolution
+
+### 2. Meta-Learning Performance
+
+- Rapid adaptation to new tasks (3-5 gradient steps)
+- Robust performance across varying task complexities
+- Effective feature importance identification
+- Clear visualization of adaptation progress
+
+### 3. Belief System Dynamics
+
+- Demonstrated smooth belief transitions
+- Tracked confidence evolution
+- Showed effective handling of contradictory evidence
+- Visualized belief space trajectories
 
 ## Development Guidelines
 
