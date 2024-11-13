@@ -1,3 +1,73 @@
+"""Meta-learning model implementing MAML algorithm for few-shot learning.
+
+    This neural network is designed to quickly adapt to new tasks through
+    the following process:
+
+    1. Meta-Initialization:
+       - The network starts with parameters θ that are explicitly trained to be easily
+         adaptable to new tasks
+
+    2. Task Adaptation:
+       - For each task, the model takes a few gradient steps from θ to θ'
+       - These steps use a small amount of task-specific data (support set)
+
+    3. Meta-Update:
+       - The model evaluates performance on held-out task data (query set)
+       - Updates θ to minimize loss after task adaptation
+       - This creates a better starting point for future task adaptation
+
+    Key Components:
+    --------------
+    1. Meta-Learning Architecture:
+       - Uses a neural network with skip connections for better gradient flow
+       - Implements bi-level optimization (inner and outer loops)
+       - Employs gradient clipping and adaptive learning rates for stability
+
+    2. Task Generation:
+       - Creates synthetic regression tasks with controlled complexity
+       - Each task represents a different non-linear function
+       - Includes multiple non-linearities (linear, sinusoidal, and hyperbolic components)
+       - Adds controlled noise for robustness
+
+    3. Meta-Training Process:
+       - Inner Loop: Quick adaptation to specific tasks (few gradient steps)
+       - Outer Loop: Updates meta-parameters to optimize post-adaptation performance
+       - Uses higher-order gradients to optimize the learning process itself
+
+    4. Visualization and Monitoring:
+       - Tracks adaptation progress
+       - Analyzes feature importance
+       - Monitors error distributions
+       - Visualizes prediction quality
+
+    Technical Details:
+    ----------------
+    - Architecture: Multi-layer perceptron with skip connections
+    - Optimization: SGD with momentum for meta-updates
+    - Learning Rate: Adaptive with ReduceLROnPlateau scheduling
+    - Regularization: Gradient clipping, early stopping
+
+    Usage:
+    ------
+    The main training loop:
+    1. Generates synthetic tasks
+    2. Performs meta-training
+    3. Demonstrates adaptation to new tasks
+    4. Visualizes the adaptation process
+
+    Example:
+        >>> meta_model = MetaModelGenerator(input_size=10, hidden_sizes=[64, 64], output_size=1)
+        >>> tasks = create_synthetic_tasks(num_tasks=200)
+        >>> task_dataloader = create_task_dataloader(tasks)
+        >>> # Train model
+        >>> loss, grad_norm = meta_model.meta_train_step(task_batch, device)
+
+    References:
+    ----------
+    1. Finn et al. (2017) - Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks
+    2. Antoniou et al. (2019) - How to train your MAML
+    """
+
 from typing import Dict, List, Optional, Tuple, Type
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +84,44 @@ from torch.utils.data import DataLoader
 
 
 class MetaModelGenerator(nn.Module):
+    """Meta-learning model implementing MAML algorithm for few-shot learning.
+
+    This neural network is designed to quickly adapt to new tasks through gradient-based
+    meta-learning. It uses a architecture with skip connections for better gradient flow
+    and implements both inner loop (task adaptation) and outer loop (meta) optimization.
+
+    Architecture Features:
+    --------------------
+    - Skip connections between hidden layers for better gradient flow
+    - Smaller initial weights for stable training
+    - Momentum-based meta-optimization
+    - Adaptive learning rate scheduling
+
+    Training Process:
+    ---------------
+    1. Inner Loop (Task Adaptation):
+       - Takes few gradient steps on task-specific data
+       - Uses fast weights for quick adaptation
+       - Implements higher-order gradients for meta-learning
+
+    2. Outer Loop (Meta-Update):
+       - Updates model parameters to improve post-adaptation performance
+       - Uses gradient clipping for stability
+       - Monitors gradient norms and learning progress
+
+    Args:
+        input_size (int): Dimension of input features
+        hidden_sizes (List[int]): List of hidden layer sizes
+        output_size (int): Dimension of output predictions
+        inner_lr (float, optional): Learning rate for task adaptation. Defaults to 0.05
+        meta_lr (float, optional): Learning rate for meta-updates. Defaults to 0.003
+
+    Attributes:
+        inner_lr (float): Learning rate for inner loop optimization
+        meta_optimizer (optim.SGD): Optimizer for meta-updates
+        scheduler (optim.lr_scheduler): Learning rate scheduler for meta-optimization
+    """
+
     def __init__(
         self,
         input_size: int,

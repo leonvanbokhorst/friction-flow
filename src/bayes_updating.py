@@ -1,3 +1,76 @@
+"""
+Bayesian Belief Network for Dynamic Belief Updating Using Language Models
+======================================================================
+
+This module implements a novel approach to modeling and updating belief systems using
+language model embeddings and Bayesian inference. It demonstrates how beliefs about
+topics can evolve based on new evidence while maintaining uncertainty estimates.
+
+Core Concepts:
+-------------
+1. Belief Representation:
+   - Beliefs are represented as high-dimensional vectors in embedding space
+   - Each dimension captures semantic aspects of the belief
+   - Vectors are generated using LLM embeddings for consistent semantic meaning
+
+2. Bayesian Framework:
+   - Prior: Current belief state and confidence
+   - Likelihood: Similarity between new evidence and current belief
+   - Posterior: Updated belief incorporating new evidence
+   - Confidence: Uncertainty measure updated via Bayes' rule
+
+3. Belief Evolution:
+   - Beliefs change gradually through weighted averaging
+   - Confidence levels affect the impact of new evidence
+   - Historical states are maintained for analysis
+   - Time-based decay models forgetting and uncertainty growth
+
+Key Components:
+--------------
+- BeliefState: Data structure holding current beliefs and history
+- BayesianBeliefUpdater: Core logic for belief updates
+- BeliefVisualizer: Visualization of belief evolution
+
+Example Experiment:
+-----------------
+The main() function demonstrates the system using AI ethics as a test domain:
+1. Starts with neutral belief about AI ethics
+2. Processes sequence of statements representing different viewpoints
+3. Shows how beliefs evolve from:
+   - Initial safety-focused perspective
+   - Through various challenging viewpoints
+   - To more nuanced understanding incorporating multiple aspects
+4. Demonstrates confidence dynamics as:
+   - Increases with confirming evidence
+   - Decreases with contradictory evidence
+   - Decays over time without updates
+
+Usage:
+------
+
+```python
+llm = OllamaInterface()
+updater = BayesianBeliefUpdater(llm)
+await updater.initialize_belief_state("AI ethics")
+new_state = await updater.update_belief("AI ethics", "New evidence...")
+analysis = await updater.analyze_belief_shift("AI ethics")
+```
+
+Mathematical Foundation:
+----------------------
+The system implements Bayes' theorem:
+P(belief|evidence) ∝ P(evidence|belief) * P(belief)
+
+Where:
+- P(belief) is the prior confidence
+- P(evidence|belief) is calculated via cosine similarity
+- P(belief|evidence) becomes the posterior confidence
+
+The belief vector itself is updated using weighted averaging:
+new_belief = (1-w) * old_belief + w * evidence
+where w is derived from the posterior confidence
+"""
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -15,10 +88,35 @@ logger = logging.getLogger(__name__)
 class BeliefState:
     """
     A data structure that represents a belief about a topic using vector embeddings.
-    - belief_vector: High-dimensional vector representing semantic meaning
-    - confidence: Scalar value [0-1] indicating certainty in current belief
-    - prior_states: Historical record of previous beliefs and confidences (limited to max_history)
-    - themes: List of identified themes (currently unused but prepared for future)
+
+    The belief state combines two key aspects:
+    1. Semantic Understanding: High-dimensional vector capturing meaning
+    2. Epistemic Uncertainty: Confidence level in current belief
+
+    Key Components:
+    --------------
+    belief_vector : np.ndarray
+        High-dimensional embedding vector representing the semantic content of the belief.
+        - Each dimension captures different aspects of meaning
+        - Normalized to unit length for consistent comparison
+        - Generated from LLM embeddings
+
+    confidence : float
+        Scalar value [0-1] indicating certainty in current belief
+        - 0.0 = complete uncertainty
+        - 1.0 = absolute certainty (never actually reached)
+        - Decays over time without reinforcement
+
+    prior_states : List[Tuple[np.ndarray, float]]
+        Historical record of previous beliefs and confidences
+        - Enables analysis of belief evolution
+        - Limited by max_history to prevent unbounded growth
+        - Used for visualization and trend analysis
+
+    themes : List[str]
+        Identified themes in the belief content
+        - Currently unused but prepared for future theme tracking
+        - Will enable analysis of belief clusters and patterns
     """
 
     belief_vector: np.ndarray
@@ -35,12 +133,53 @@ class BeliefState:
 
 class BayesianBeliefUpdater:
     """
-    Core class that implements Bayesian belief updating using language model embeddings.
-    Key concepts:
-    1. Each topic maintains its own belief state
-    2. Updates are performed using Bayesian inference
-    3. Beliefs are represented as high-dimensional embeddings
-    4. Confidence is updated based on similarity between current beliefs and new evidence
+    Implements dynamic belief updating using Bayesian inference and LLM embeddings.
+
+    Core Algorithm:
+    --------------
+    1. Belief Representation:
+       - Uses LLM embeddings to capture semantic meaning
+       - Maintains normalized vectors for consistent comparison
+       - Tracks confidence separately from belief content
+
+    2. Update Mechanism:
+       a) Prior Capture:
+          - Stores current state before update
+          - Maintains limited history
+
+       b) Evidence Processing:
+          - Converts new evidence to embedding
+          - Ensures consistent semantic space
+
+       c) Likelihood Calculation:
+          - Uses cosine similarity
+          - Higher similarity = stronger support for current belief
+
+       d) Confidence Update:
+          - Applies Bayes' rule
+          - Includes time-based decay
+          - More sensitive to contradictory evidence
+
+       e) Belief Vector Update:
+          - Weighted average based on confidence
+          - Ensures smooth transitions
+          - Maintains vector normalization
+
+    Design Principles:
+    -----------------
+    1. Conservative Updates:
+       - Beliefs change gradually
+       - Requires consistent evidence for major shifts
+
+    2. Uncertainty Handling:
+       - Confidence decays over time
+       - Contradictory evidence reduces confidence faster
+       - Maximum confidence is capped
+
+    3. Memory Effects:
+       - Maintains history of belief states
+       - Enables analysis of belief evolution
+       - Supports visualization of changes
     """
 
     def __init__(self, llm: LanguageModel):
