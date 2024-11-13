@@ -147,12 +147,12 @@ class BiasDetector:
         try:
             # Get embedding for the explanation
             explanation_embedding = self.get_embedding(explanation)
-            
+
             # Validate embedding dimensions
             if len(explanation_embedding) == 0:
                 logger.warning("Received empty embedding, returning minimum confidence")
                 return 0.5
-            
+
             if len(explanation_embedding) != len(text_embedding):
                 logger.error(
                     f"Embedding dimension mismatch: {len(text_embedding)} vs {len(explanation_embedding)}"
@@ -170,9 +170,9 @@ class BiasDetector:
 
             similarity = dot_product / (text_norm * explanation_norm)
             confidence = 0.5 + (similarity * 0.5)
-            
+
             return float(np.clip(confidence, 0.0, 1.0))
-            
+
         except Exception as e:
             logger.error(f"Error calculating confidence: {str(e)}")
             return 0.5
@@ -246,16 +246,69 @@ class BiasDetector:
 
         return [chunk for chunk in chunks if chunk.strip()]  # Remove empty chunks
 
+    def save_analysis_report(
+        self, results: Dict[BiasType, List[BiasDetectionResult]], output_path: Path
+    ) -> None:
+        """Generate and save a markdown report of the bias analysis results.
+
+        Args:
+            results: Dictionary mapping BiasType to list of detection results
+            output_path: Path where the markdown report should be saved
+        """
+        # Overall statistics
+        total_instances = sum(len(bias_results) for bias_results in results.values())
+        avg_confidences = {
+            bias_type: np.mean([r.confidence for r in bias_results])
+            for bias_type, bias_results in results.items()
+        }
+
+        report = [
+            "# Bias Analysis Report\n",
+            *(
+                "## Summary\n",
+                f"- Total bias instances detected: {total_instances}",
+                "- Average confidence by bias type:",
+            ),
+        ]
+        report.extend(
+            f"  - {bias_type.value}: {avg_conf:.2f}"
+            for bias_type, avg_conf in avg_confidences.items()
+        )
+        report.append("\n")
+
+        # Detailed results by bias type
+        for bias_type, bias_results in results.items():
+            report.append(f"## {bias_type.value.replace('_', ' ').title()}\n")
+
+            # Sort results by confidence
+            sorted_results = sorted(
+                bias_results, key=lambda x: x.confidence, reverse=True
+            )
+
+            for result in sorted_results:
+                report.extend(
+                    (
+                        f"### Instance (Confidence: {result.confidence:.2f})",
+                        f"\n**Explanation:**\n{result.explanation}\n",
+                    )
+                )
+                if result.affected_segments:
+                    report.append("**Affected Segments:**")
+                    report.extend(
+                        f"- {segment}" for segment in result.affected_segments
+                    )
+                report.append("\n")
+
+        # Save the report
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(report))
+        logger.info(f"Analysis report saved to {output_path}")
+
 
 async def main():
     detector = BiasDetector()
-    results = await detector.analyze_document(Path("docs/mini-schoof.txt"))
-    for bias_type, bias_results in results.items():
-        print(f"\n{bias_type.value}:")
-        for result in bias_results:
-            print(f"- Confidence: {result.confidence}")
-            print(f"- Explanation: {result.explanation}")
-            print(f"- Affected segments: {result.affected_segments}")
+    results = await detector.analyze_document(Path("docs/schoof.txt"))
+    detector.save_analysis_report(results, Path("schoof_analysis_report.md"))
 
 
 if __name__ == "__main__":
