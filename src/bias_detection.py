@@ -36,7 +36,7 @@ class BiasDetector:
         embeddings_model_name: str = "nomic-embed-text",
     ):
         self.model_name = model_name
-        self.embeddings = embeddings_model_name
+        self.embeddings_model_name = embeddings_model_name
         self.prompts = self._load_bias_prompts()
 
     def _load_bias_prompts(self) -> Dict[BiasType, str]:
@@ -81,7 +81,7 @@ class BiasDetector:
 
     def get_embedding(self, text: str) -> List[float]:
         """Get embeddings using Ollama."""
-        response = ollama.embeddings(model=self.model_name, prompt=text)
+        response = ollama.embeddings(model=self.embeddings_model_name, prompt=text)
         return response["embedding"]
 
     async def detect_bias(
@@ -307,8 +307,8 @@ class BiasDetector:
 
 async def main():
     detector = BiasDetector()
-    results = await detector.analyze_document(Path("docs/schoof.txt"))
-    detector.save_analysis_report(results, Path("schoof_analysis_report.md"))
+    results = await detector.analyze_document(Path("docs/sippe-smiley.txt"))
+    detector.save_analysis_report(results, Path("sippe_smiley_analysis_report.md"))
 
 
 if __name__ == "__main__":
