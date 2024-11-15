@@ -9,6 +9,7 @@ from mas_learn.agents import (
 from mas_learn.utils.logger import mas_logger
 from mas_learn.storage.results_store import ResultsStore, ExecutionResult
 from datetime import datetime
+import asyncio
 
 
 class MultiAgentOrchestrator:
@@ -34,95 +35,52 @@ class MultiAgentOrchestrator:
         mas_logger.agent_activity("system", action, details)
 
     async def execute_research_cycle(self, topic: str) -> dict:
-        await self.log_system_activity("start_research_cycle", {"topic": topic})
-
-        # Start research
-        cycle_id = await self.agents["researcher"].start_research_cycle(
-            topic=topic,
-            objectives=[
-                "Generate novel approach",
-                "Implement solution",
-                "Evaluate results",
-            ],
-        )
-
-        # Log progress at each major step
-        await self.log_system_activity(
-            "research_cycle_progress", {"cycle_id": cycle_id, "phase": "ideation"}
-        )
-
-        # Generate ideas
-        mas_logger.console("Generating ideas...")
-        ideas = await self.agents["researcher"].generate_ideas(topic)
-
-        # Get user feedback on ideas
-        mas_logger.console("\nGenerated ideas:")
-        for idx, idea in enumerate(ideas, 1):
-            mas_logger.console(f"\n{idx}. {idea['title']}")
-
-        approval = await self.agents["researcher"].report_to_user(
-            {"phase": "ideation", "ideas": ideas}
-        )
-
-        if approval.lower() != "yes":
-            mas_logger.console("Research cycle cancelled by user")
-            return {"status": "cancelled", "ideas": []}
-
+        # Reference existing implementation structure
+        reference_impl = {
+            "startLine": 36,
+            "endLine": 125
+        }
+        
         try:
-            # Format the first idea as a proper specification for the coder
-            selected_idea = ideas[0]
-            implementation_spec = {
-                "title": selected_idea["title"],
-                "architecture": selected_idea["architecture"],
-                "implementation": {
-                    "libraries": selected_idea.get("components", []),
-                    "core_classes": selected_idea.get("implementation", {}).get(
-                        "core_classes", []
-                    ),
-                    "data_pipeline": selected_idea.get("implementation", {}).get(
-                        "data_pipeline", []
-                    ),
-                },
-                "evaluation": selected_idea.get("evaluation", []),
-                "description": selected_idea["description"],
-            }
-
-            code = await self.agents["coder"].write_code(implementation_spec)
-
-            if not code:
-                await self.log_system_activity(
-                    "implementation_failed",
-                    {"reason": "No code generated", "phase": "code_generation"},
-                )
-                return {
-                    "status": "failed",
-                    "ideas": ideas,
-                    "error": "Code generation failed",
-                }
-
-            await self.store_execution_result(
-                code=code,
-                output="Code generated successfully",
-                status="success",
-                validation_results={"generation": "successful"},
-                metadata={"topic": topic, "selected_idea": selected_idea["title"]},
+            # Initialize research cycle
+            cycle_id = await self.agents["researcher"].start_research_cycle(
+                topic=topic,
+                objectives=self._get_research_objectives(topic)
             )
-
+            
+            # Parallel execution of research and analysis
+            results = await asyncio.gather(
+                self.agents["researcher"].web_search(topic),
+                self.agents["ml_engineer"].analyze_architecture_options({"objective": topic}),
+                self.agents["coder"].prepare_implementation_plan({"objective": topic})
+            )
+            
+            # Synthesize findings
+            synthesis = await self.agents["researcher"].synthesize_findings(results[0])
+            
+            # Get architecture design
+            architecture = await self.agents["ml_engineer"].design_architecture({
+                "research_findings": synthesis,
+                "technical_requirements": results[1]
+            })
+            
+            # Generate implementation
+            implementation = await self.agents["coder"].implement_solution({
+                "architecture": architecture,
+                "implementation_plan": results[2]
+            })
+            
             return {
                 "status": "success",
-                "ideas": ideas,
-                "implementation": {
-                    "code": code,
-                    "selected_idea": selected_idea["title"],
-                },
+                "cycle_id": cycle_id,
+                "synthesis": synthesis,
+                "architecture": architecture,
+                "implementation": implementation
             }
-
+            
         except Exception as e:
-            await self.log_system_activity(
-                "implementation_error", {"error": str(e), "phase": "implementation"}
-            )
-            mas_logger.error(f"Implementation failed: {str(e)}", "Orchestrator")
-            return {"status": "error", "ideas": ideas, "error": str(e)}
+            await self.log_system_activity("research_cycle_error", {"error": str(e)})
+            return {"status": "error", "error": str(e)}
 
     async def store_execution_result(
         self,

@@ -1,28 +1,69 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from mas_learn.utils.logger import mas_logger
 from mas_learn.memory.vector_memory import VectorMemory
+from pathlib import Path
+import json
+import datetime
+import os
 
 
 class BaseAgent:
-    def __init__(self, name: str, role: str, capabilities: List[str], orchestrator=None):
+    def __init__(
+        self, name: str, role: str, capabilities: List[str], orchestrator=None
+    ):
         self.name = name
         self.role = role
         self.capabilities = capabilities
         self.orchestrator = orchestrator
         self.memory = VectorMemory()
-        self.llm = Ollama(model="qwen2.5-coder:32b")  # qwen2.5-coder:14b
+        self.llm = OllamaLLM(model="qwen2.5-coder:14b")
+        self.artifacts_dir = self._setup_artifacts_dir()
 
         # Set up agent-specific logger
         self.logger = mas_logger.setup_agent_logger(name)
 
         # Log initialization
-        mas_logger.agent_activity(name, "initialized", {
-            "role": role,
-            "capabilities": capabilities
-        })
+        mas_logger.agent_activity(
+            name, "initialized", {"role": role, "capabilities": capabilities}
+        )
+
+    def _setup_artifacts_dir(self) -> Path:
+        """Setup artifacts directory structure"""
+        base_dir = Path("artifacts")
+        agent_dir = base_dir / self.name
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_dir = agent_dir / timestamp
+
+        # Create directories if they don't exist
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        return session_dir
+
+    async def store_artifact(
+        self, artifact_type: str, content: Any, metadata: Dict = None
+    ) -> str:
+        """Store agent artifacts with metadata"""
+        timestamp = datetime.datetime.now().isoformat()
+        artifact_id = f"{artifact_type}_{timestamp}"
+
+        artifact_data = {
+            "agent": self.name,
+            "role": self.role,
+            "type": artifact_type,
+            "timestamp": timestamp,
+            "content": content,
+            "metadata": metadata or {},
+        }
+
+        # Save artifact to JSON file
+        artifact_path = self.artifacts_dir / f"{artifact_id}.json"
+        with open(artifact_path, "w") as f:
+            json.dump(artifact_data, f, indent=2)
+
+        return str(artifact_path)
 
     def _initialize_memory(self):
         """Initialize vector storage for agent memory"""
@@ -36,7 +77,6 @@ class BaseAgent:
     def _initialize_llm(self):
         """Initialize Ollama LLM with qwen2.5-coder model"""
         from langchain.llms import Ollama
-
         return Ollama(model="qwen2.5-coder:32b")
 
     async def log_activity(self, action: str, details: dict = None):
@@ -47,11 +87,11 @@ class BaseAgent:
         self, message: str, target_agent: Optional["BaseAgent"] = None
     ):
         """Communicate with other agents or respond to messages"""
-        await self.log_activity("communicate", {
-            "target": target_agent.name if target_agent else None,
-            "message": message
-        })
-        
+        await self.log_activity(
+            "communicate",
+            {"target": target_agent.name if target_agent else None, "message": message},
+        )
+
         if target_agent:
             return await self._send_message(message, target_agent)
         return await self._process_message(message)

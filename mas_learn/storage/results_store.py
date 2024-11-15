@@ -72,3 +72,9 @@ class ResultsStore:
                 results.append(file_path.stem)
                 
         return results 
+
+class EnhancedArtifactStorage:
+    def save_artifact(self, content, metadata):
+        validated = self._validate_content(content)
+        enriched = self._enrich_metadata(metadata)
+        return self._store_with_versioning(validated, enriched)

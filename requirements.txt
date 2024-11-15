@@ -38,3 +38,4 @@ bs4
 # Langchain
 langchain
 langchain-community
+langchain-ollama

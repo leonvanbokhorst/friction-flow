@@ -1,9 +1,11 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from .base_agent import BaseAgent
 import ast
 import inspect
 from pathlib import Path
 import json
+from mas_learn.utils.code_analyzer import CodeAnalyzer
+import difflib
 
 class CoderAgent(BaseAgent):
     def __init__(self, name: str, orchestrator=None):
@@ -20,6 +22,7 @@ class CoderAgent(BaseAgent):
             orchestrator=orchestrator
         )
         self.code_history = []
+        self.code_analyzer = CodeAnalyzer()
         
     async def write_code(self, specification: str) -> str:
         """Write code based on specification"""
@@ -65,7 +68,7 @@ class CoderAgent(BaseAgent):
             })
             return ""
 
-    async def analyze_code(self, code: str) -> Dict[str, any]:
+    async def analyze_code(self, code: str) -> Dict[str, Any]:
         """
         Perform static analysis on code to identify potential improvements
         
@@ -75,17 +78,7 @@ class CoderAgent(BaseAgent):
         Returns:
             Dict containing analysis results
         """
-        try:
-            tree = ast.parse(code)
-            analysis = {
-                'complexity': self._analyze_complexity(tree),
-                'documentation': self._analyze_documentation(tree),
-                'type_hints': self._analyze_type_hints(tree),
-                'potential_issues': self._analyze_potential_issues(tree)
-            }
-            return analysis
-        except SyntaxError as e:
-            return {'error': f'Syntax error in code: {str(e)}'}
+        return self.code_analyzer.analyze_code(code)
 
     async def execute_code(self, code: str, args: Dict = None) -> Tuple[bool, str]:
         """
@@ -127,222 +120,184 @@ class CoderAgent(BaseAgent):
             
         try:
             # Execute in restricted environment
-            result = self._safe_execute(code, args)
+            result = await self._safe_execute(code, args)
             return True, result
         except Exception as e:
             return False, f"Execution error: {str(e)}"
 
-    def _analyze_complexity(self, tree: ast.AST) -> Dict:
+    async def prepare_implementation_plan(self, research_task: Dict) -> Dict:
         """
-        Analyze code complexity metrics including cyclomatic complexity,
-        nesting depth, and cognitive complexity.
+        Prepare a detailed implementation plan based on research task
         
         Args:
-            tree: Abstract Syntax Tree of the code
+            research_task: Dictionary containing task specifications
             
         Returns:
-            Dict containing complexity metrics
+            Dict: Implementation plan with code structure and components
         """
-        class ComplexityVisitor(ast.NodeVisitor):
-            def __init__(self):
-                self.complexity = 0
-                self.max_depth = 0
-                self.current_depth = 0
-                self.cognitive_complexity = 0
+        try:
+            # Create implementation plan using LLM
+            prompt = f"""
+            Create a detailed implementation plan for:
+            {json.dumps(research_task, indent=2)}
+            
+            Include:
+            1. Code structure and organization
+            2. Required dependencies
+            3. Core classes and functions
+            4. Data processing pipeline
+            5. Testing strategy
+            
+            Format as a structured JSON response.
+            """
+            
+            response = await self.llm.ainvoke(prompt)
+            
+            # Parse and validate response
+            try:
+                plan = json.loads(response)
+            except json.JSONDecodeError:
+                # If response isn't valid JSON, create structured format
+                plan = {
+                    "code_structure": response.split("\n"),
+                    "dependencies": [],
+                    "core_components": [],
+                    "data_pipeline": [],
+                    "testing": []
+                }
                 
-            def visit_If(self, node):
-                self.complexity += 1
-                self.current_depth += 1
-                self.cognitive_complexity += self.current_depth
-                self.max_depth = max(self.max_depth, self.current_depth)
-                self.generic_visit(node)
-                self.current_depth -= 1
-                
-            def visit_While(self, node):
-                self.complexity += 1
-                self.current_depth += 1
-                self.cognitive_complexity += self.current_depth
-                self.max_depth = max(self.max_depth, self.current_depth)
-                self.generic_visit(node)
-                self.current_depth -= 1
-                
-            def visit_For(self, node):
-                self.complexity += 1
-                self.current_depth += 1
-                self.cognitive_complexity += self.current_depth
-                self.max_depth = max(self.max_depth, self.current_depth)
-                self.generic_visit(node)
-                self.current_depth -= 1
-                
-            def visit_Try(self, node):
-                self.complexity += len(node.handlers)
-                self.current_depth += 1
-                self.cognitive_complexity += self.current_depth
-                self.max_depth = max(self.max_depth, self.current_depth)
-                self.generic_visit(node)
-                self.current_depth -= 1
-        
-        visitor = ComplexityVisitor()
-        visitor.visit(tree)
-        
-        return {
-            'cyclomatic_complexity': visitor.complexity,
-            'max_nesting_depth': visitor.max_depth,
-            'cognitive_complexity': visitor.cognitive_complexity
-        }
+            await self.log_activity("implementation_plan_created", {
+                "task": research_task["objective"],
+                "plan_size": len(str(plan))
+            })
+            
+            # Store implementation plan artifact
+            await self.store_artifact(
+                "implementation_plan",
+                plan,
+                {"task": research_task["objective"]}
+            )
+            
+            return plan
+            
+        except Exception as e:
+            await self.log_activity("implementation_plan_failed", {"error": str(e)})
+            raise
 
-    def _analyze_documentation(self, tree: ast.AST) -> Dict:
+    async def implement_solution(self, inputs: Dict) -> Dict:
+        """Implement solution with error recovery"""
+        try:
+            # Extract inputs
+            architecture = inputs.get("architecture", {})
+            implementation_plan = inputs.get("implementation_plan", {})
+            
+            # Generate implementation code
+            code = await self.write_code({
+                "architecture": architecture,
+                "components": implementation_plan.get("core_components", []),
+                "evaluation": implementation_plan.get("testing", [])
+            })
+            
+            # Clean the code before validation
+            code = await self._clean_code_block(code)
+            
+            # Validate the generated code
+            validation = await self.analyze_code(code)
+            
+            if validation.get("errors", []):
+                # Attempt recovery if validation fails
+                recovery_result = await self.recover_from_error(
+                    ValueError("Code validation failed"),
+                    code,
+                    {"validation": validation, "inputs": inputs}
+                )
+                
+                if recovery_result["status"] == "success":
+                    code = await self._clean_code_block(recovery_result["fixed_code"])
+                else:
+                    raise ValueError("Failed to generate valid code")
+            
+            # Store implementation artifact
+            await self.store_artifact(
+                "solution_implementation",
+                {
+                    "code": code,
+                    "architecture": architecture,
+                    "plan": implementation_plan
+                },
+                {"status": "completed"}
+            )
+            
+            return {
+                "code": code,
+                "status": "success",
+                "architecture": architecture["design_summary"]
+            }
+            
+        except Exception as e:
+            # Attempt recovery for any implementation error
+            recovery_result = await self.recover_from_error(
+                e, code if 'code' in locals() else "", inputs
+            )
+            
+            if recovery_result["status"] == "success":
+                clean_code = await self._clean_code_block(recovery_result["fixed_code"])
+                return {
+                    "code": clean_code,
+                    "status": "recovered",
+                    "architecture": architecture["design_summary"],
+                    "recovery_changes": recovery_result["changes"]
+                }
+                
+            await self.log_activity("implementation_failed", {
+                "error": str(e),
+                "recovery_attempted": True
+            })
+            raise
+
+    async def _safe_execute(self, code: str, args: Optional[Dict] = None) -> str:
         """
-        Analyze documentation coverage including docstrings and comments.
+        Execute code in a sandboxed environment
         
         Args:
-            tree: Abstract Syntax Tree of the code
+            code: Code to execute
+            args: Optional arguments for execution
             
         Returns:
-            Dict containing documentation metrics
+            str: Execution result
         """
-        class DocVisitor(ast.NodeVisitor):
-            def __init__(self):
-                self.total_functions = 0
-                self.documented_functions = 0
-                self.total_classes = 0
-                self.documented_classes = 0
-                
-            def visit_FunctionDef(self, node):
-                self.total_functions += 1
-                if ast.get_docstring(node):
-                    self.documented_functions += 1
-                self.generic_visit(node)
-                
-            def visit_ClassDef(self, node):
-                self.total_classes += 1
-                if ast.get_docstring(node):
-                    self.documented_classes += 1
-                self.generic_visit(node)
-        
-        visitor = DocVisitor()
-        visitor.visit(tree)
-        
-        return {
-            'function_coverage': {
-                'total': visitor.total_functions,
-                'documented': visitor.documented_functions,
-                'percentage': (visitor.documented_functions / visitor.total_functions * 100) if visitor.total_functions > 0 else 100
-            },
-            'class_coverage': {
-                'total': visitor.total_classes,
-                'documented': visitor.documented_classes,
-                'percentage': (visitor.documented_classes / visitor.total_classes * 100) if visitor.total_classes > 0 else 100
+        # Create a restricted globals dictionary
+        safe_globals = {
+            '__builtins__': {
+                'print': print,
+                'len': len,
+                'range': range,
+                'list': list,
+                'dict': dict,
+                'set': set,
+                'str': str,
+                'int': int,
+                'float': float,
+                'bool': bool,
+                'tuple': tuple,
+                'min': min,
+                'max': max,
+                'sum': sum,
+                'enumerate': enumerate,
+                'zip': zip,
             }
         }
-
-    def _analyze_type_hints(self, tree: ast.AST) -> Dict:
-        """
-        Analyze type hint coverage in functions and class methods.
         
-        Args:
-            tree: Abstract Syntax Tree of the code
-            
-        Returns:
-            Dict containing type hint metrics
-        """
-        class TypeHintVisitor(ast.NodeVisitor):
-            def __init__(self):
-                self.total_functions = 0
-                self.typed_functions = 0
-                self.total_arguments = 0
-                self.typed_arguments = 0
-                self.return_hints = 0
-                
-            def visit_FunctionDef(self, node):
-                self.total_functions += 1
-                
-                # Check return type hint
-                if node.returns:
-                    self.return_hints += 1
-                
-                # Check argument type hints
-                for arg in node.args.args:
-                    self.total_arguments += 1
-                    if arg.annotation:
-                        self.typed_arguments += 1
-                        
-                if self.total_arguments > 0 and self.typed_arguments == self.total_arguments and node.returns:
-                    self.typed_functions += 1
-                    
-                self.generic_visit(node)
+        # Add provided arguments to globals
+        if args:
+            safe_globals.update(args)
         
-        visitor = TypeHintVisitor()
-        visitor.visit(tree)
-        
-        return {
-            'function_type_coverage': {
-                'total': visitor.total_functions,
-                'fully_typed': visitor.typed_functions,
-                'percentage': (visitor.typed_functions / visitor.total_functions * 100) if visitor.total_functions > 0 else 100
-            },
-            'argument_type_coverage': {
-                'total': visitor.total_arguments,
-                'typed': visitor.typed_arguments,
-                'percentage': (visitor.typed_arguments / visitor.total_arguments * 100) if visitor.total_arguments > 0 else 100
-            },
-            'return_type_coverage': {
-                'total': visitor.total_functions,
-                'typed': visitor.return_hints,
-                'percentage': (visitor.return_hints / visitor.total_functions * 100) if visitor.total_functions > 0 else 100
-            }
-        }
-
-    def _analyze_potential_issues(self, tree: ast.AST) -> List[str]:
-        """
-        Identify potential code issues and anti-patterns.
-        
-        Args:
-            tree: Abstract Syntax Tree of the code
-            
-        Returns:
-            List of identified issues with descriptions
-        """
-        class IssueVisitor(ast.NodeVisitor):
-            def __init__(self):
-                self.issues = []
-                self.loop_depth = 0
-                self.try_depth = 0
-                
-            def visit_Try(self, node):
-                self.try_depth += 1
-                if self.try_depth > 3:
-                    self.issues.append("Excessive nested try blocks detected")
-                if not node.handlers:
-                    self.issues.append("Empty except clause detected")
-                for handler in node.handlers:
-                    if handler.type is None:
-                        self.issues.append("Bare except clause detected - consider catching specific exceptions")
-                self.generic_visit(node)
-                self.try_depth -= 1
-                
-            def visit_While(self, node):
-                self.loop_depth += 1
-                if self.loop_depth > 4:
-                    self.issues.append("Deep loop nesting detected - consider refactoring")
-                self.generic_visit(node)
-                self.loop_depth -= 1
-                
-            def visit_Compare(self, node):
-                if isinstance(node.ops[0], (ast.Is, ast.IsNot)) and isinstance(node.comparators[0], ast.Constant):
-                    if node.comparators[0].value is None:
-                        self.issues.append("Use 'is None' or 'is not None' for None comparisons")
-                self.generic_visit(node)
-        
-        visitor = IssueVisitor()
-        visitor.visit(tree)
-        
-        return visitor.issues
-
-    def _safe_execute(self, code: str, args: Optional[Dict] = None) -> str:
-        """Execute code in a sandboxed environment"""
-        # Implementation for safe code execution
-        pass 
+        try:
+            # Execute code in restricted environment
+            exec(code, safe_globals, {})
+            return str(safe_globals.get('result', 'Code executed successfully'))
+        except Exception as e:
+            raise RuntimeError(f"Safe execution failed: {str(e)}")
 
     async def _generate_code(self, specification: str) -> str:
         """Generate code based on specification using LLM"""
@@ -366,3 +321,186 @@ class CoderAgent(BaseAgent):
         except Exception as e:
             await self.log_activity("code_generation_error", {"error": str(e)})
             raise 
+
+    async def recover_from_error(self, error: Exception, code: str, context: Dict) -> Dict:
+        """
+        Attempt to recover from coding errors by analyzing and fixing the problematic code
+        
+        Args:
+            error: The exception that occurred
+            code: The code that caused the error
+            context: Additional context about the code generation attempt
+            
+        Returns:
+            Dict containing:
+                - fixed_code: Corrected code if recovery successful
+                - status: Recovery status
+                - changes: List of changes made
+        """
+        try:
+            # Log recovery attempt
+            await self.log_activity("error_recovery_start", {
+                "error": str(error),
+                "code_length": len(code)
+            })
+            
+            # Analyze the error and code
+            analysis = await self.analyze_code(code)
+            
+            # Create error recovery prompt
+            recovery_prompt = f"""
+            Fix the following code that generated an error:
+            
+            Error: {str(error)}
+            
+            Code:
+            {code}
+            
+            Analysis Results:
+            {analysis}
+            
+            Context:
+            {json.dumps(context, indent=2)}
+            
+            Provide fixed code that resolves the error.
+            Return only the corrected code without explanations.
+            """
+            
+            # Generate fixed code
+            fixed_code = await self.llm.ainvoke(recovery_prompt)
+            
+            # Validate fixed code
+            validation_result = await self.analyze_code(fixed_code)
+            
+            if validation_result.get("errors", []):
+                raise ValueError("Recovery attempt produced invalid code")
+                
+            return {
+                "fixed_code": fixed_code,
+                "status": "success",
+                "changes": self._diff_changes(code, fixed_code)
+            }
+            
+        except Exception as recovery_error:
+            await self.log_activity("error_recovery_failed", {
+                "original_error": str(error),
+                "recovery_error": str(recovery_error)
+            })
+            return {
+                "fixed_code": "",
+                "status": "failed",
+                "changes": []
+            }
+
+    async def _clean_code_block(self, code: str) -> str:
+        """Remove markdown code block tags and line numbers from code
+        
+        Args:
+            code: Raw code string that may contain markdown tags
+            
+        Returns:
+            str: Clean code ready for execution
+        """
+        # Remove markdown code block tags if present
+        code = code.strip()
+        if code.startswith("```") and code.endswith("```"):
+            # Extract language if specified
+            first_line = code.split("\n")[0]
+            if ":" in first_line:  # Handle ```python:filename.py
+                first_line = first_line.split(":")[0]
+            
+            # Remove first and last lines containing ``` tags
+            code_lines = code.split("\n")[1:-1]
+            code = "\n".join(code_lines)
+        
+        return code.strip()
+
+    def _diff_changes(self, original_code: str, updated_code: str) -> List[str]:
+        """
+        Compare original and updated code to generate a list of changes made.
+        
+        Args:
+            original_code (str): The original code before recovery
+            updated_code (str): The updated code after recovery
+            
+        Returns:
+            List[str]: List of human-readable change descriptions
+        """
+        changes = []
+        diff = difflib.unified_diff(
+            original_code.splitlines(keepends=True),
+            updated_code.splitlines(keepends=True),
+            fromfile='original',
+            tofile='recovered',
+            n=0  # Only show changed lines
+        )
+        
+        for line in diff:
+            if line.startswith('+') and not line.startswith('+++'):
+                changes.append(f"Added: {line[1:].strip()}")
+            elif line.startswith('-') and not line.startswith('---'):
+                changes.append(f"Removed: {line[1:].strip()}")
+                
+        return changes if changes else ["No significant changes detected"]
+
+    async def error_recovery(self, code: str, error_msg: str) -> Dict:
+        """
+        Attempt to recover from code errors by analyzing and fixing the issue.
+        
+        Args:
+            code (str): The problematic code
+            error_msg (str): The error message received
+            
+        Returns:
+            Dict: Recovery results including status and changes made
+        """
+        try:
+            original_code = code
+            # Attempt to fix the code using LLM
+            fixed_code = await self._fix_code(code, error_msg)
+            
+            if fixed_code:
+                changes = self._diff_changes(original_code, fixed_code)
+                return {
+                    "status": "recovered",
+                    "code": fixed_code,
+                    "recovery_changes": changes
+                }
+            
+            return {
+                "status": "failed",
+                "error": "Could not generate valid fix"
+            }
+            
+        except Exception as e:
+            return {
+                "status": "failed",
+                "error": str(e)
+            }
+
+    async def _fix_code(self, code: str, error_msg: str) -> Optional[str]:
+        """
+        Use LLM to attempt to fix the code based on the error message.
+        
+        Args:
+            code (str): The problematic code
+            error_msg (str): The error message received
+            
+        Returns:
+            Optional[str]: Fixed code if successful, None otherwise
+        """
+        prompt = f"""
+        Fix the following Python code that generated this error:
+        ERROR: {error_msg}
+        
+        CODE:
+        {code}
+        
+        Return only the fixed code without explanations.
+        """
+        
+        try:
+            response = await self.llm.agenerate([prompt])
+            return response.generations[0].text.strip()
+        except Exception:
+            return None

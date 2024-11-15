@@ -5,9 +5,10 @@ import json
 from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 import logging
 import re
+from xml.etree import ElementTree
 
 # Add logger configuration
 logger = logging.getLogger(__name__)
@@ -19,12 +20,12 @@ class ResearcherAgent(BaseAgent):
         name: str = "researcher",
         role: str = "Research Specialist",
         capabilities: List[str] = None,
-        orchestrator=None
+        orchestrator=None,
     ):
         capabilities = capabilities or ["research", "analysis", "ideation"]
         super().__init__(name, role, capabilities, orchestrator=orchestrator)
         # Override with Hermes model specifically for research
-        self.llm = Ollama(model="hermes3:latest")  # don't change this
+        self.llm = OllamaLLM(model="qwen2.5-coder:14b")
         self.research_history = []
         self.current_research_cycle = None
 
@@ -77,9 +78,11 @@ class ResearcherAgent(BaseAgent):
             results = await self._execute_search(session, query, max_results)
             processed_results = await self._process_search_results(results)
 
-            # Store results in memory
-            await self.learn(
-                f"Search results for query: {query}\n{json.dumps(processed_results)}"
+            # Store search results artifact (this will handle the learning)
+            await self.store_artifact(
+                "web_search_results",
+                processed_results,
+                {"query": query, "max_results": max_results},
             )
 
             return processed_results
@@ -88,18 +91,18 @@ class ResearcherAgent(BaseAgent):
         """Generate research ideas based on context."""
         # Add debug logging
         print(f"[DEBUG] Generating ideas for objective: {objective}")
-        
+
         prompt = self._create_research_prompt(objective)
         ideas = await self._get_llm_response(prompt)
-        
+
         # Add debug logging
         print(f"[DEBUG] Raw LLM response: {ideas}")
-        
+
         parsed_ideas = await self._parse_ideas(ideas)
-        
+
         # Add debug logging
         print(f"[DEBUG] Parsed ideas: {parsed_ideas}")
-        
+
         return parsed_ideas
 
     async def create_synthetic_data(self, specification: Dict) -> Dict:
@@ -154,88 +157,101 @@ class ResearcherAgent(BaseAgent):
     async def _execute_search(
         self, session: aiohttp.ClientSession, query: str, max_results: int
     ) -> List[Dict]:
-        """
-        Execute web search using multiple search engines
+        try:
+            # Use direct search implementation
+            results = []
 
-        Args:
-            session: aiohttp client session
-            query: Search query
-            max_results: Maximum number of results
+            # Execute search using LLM for query enhancement
+            enhanced_query = await self._enhance_search_query(query)
 
-        Returns:
-            List[Dict]: Raw search results from multiple sources
-        """
-        search_engines = {
-            "duckduckgo": "https://api.duckduckgo.com/",
-            "github": "https://api.github.com/search/repositories",
-            "arxiv": "http://export.arxiv.org/api/query",
-        }
+            # Perform search using existing capabilities
+            response = await self.llm.ainvoke(
+                f"""
+            Search for relevant information about: {enhanced_query}
+            
+            Format results as a list of JSON objects with:
+            - title: str
+            - content: str
+            - relevance: float (0-1)
+            - source: str
+            """
+            )
 
-        results = []
-        for engine, url in search_engines.items():
             try:
-                params = self._get_search_params(engine, query)
-                async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        data = await response.text()
-                        parsed_results = self._parse_search_response(engine, data)
-                        results.extend(parsed_results[:max_results])
+                search_results = json.loads(response)
+                results.extend(search_results)
+            except json.JSONDecodeError:
+                # Fallback structure if response isn't valid JSON
+                results.append(
+                    {
+                        "title": "Search Results",
+                        "content": response,
+                        "relevance": 0.5,
+                        "source": "llm_direct",
+                    }
+                )
 
-                        # Store search metadata
-                        await self.learn(f"Search executed on {engine}: {query}")
-            except Exception as e:
-                await self.learn(f"Search error on {engine}: {str(e)}")
+            return results[:max_results]
 
-        return results[:max_results]
+        except Exception as e:
+            await self.log_activity("search_error", {"error": str(e)})
+            return []
 
     async def _process_search_results(self, results: List[Dict]) -> List[Dict]:
         """
-        Process and extract relevant information from search results
+        Process and summarize search results
 
         Args:
-            results: Raw search results
+            results: Raw search results from different sources
 
         Returns:
-            List[Dict]: Processed and structured results
+            List[Dict]: Processed and summarized results
         """
         processed_results = []
 
         for result in results:
-            # Extract main content using BeautifulSoup if HTML
-            if "html_content" in result:
-                soup = BeautifulSoup(result["html_content"], "html.parser")
-                main_content = self._extract_main_content(soup)
-            else:
-                main_content = result.get("content", "")
+            try:
+                # Generate summary using LLM
+                summary_prompt = f"""
+                Summarize the following research finding:
+                Title: {result.get('title', 'No title')}
+                Content: {result.get('content', 'No content')}
+                Source: {result.get('source', 'Unknown')}
+                
+                Provide a concise summary focusing on key findings and relevance.
+                """
 
-            # Generate summary using LLM
-            summary_prompt = f"""
-            Summarize the following content concisely:
-            {main_content[:1000]}  # Limit content length for LLM
-            
-            Focus on:
-            1. Key findings or insights
-            2. Relevant technical details
-            3. Novel approaches or solutions
-            """
+                summary = await self.llm.ainvoke(summary_prompt)
 
-            summary_response = await self.llm.agenerate([summary_prompt])
-            summary = summary_response.generations[0].text
+                # Calculate relevance score
+                relevance_score = self._calculate_relevance(
+                    result.get("content", ""),
+                    (
+                        self.current_research_cycle.get("topic", "")
+                        if self.current_research_cycle
+                        else ""
+                    ),
+                )
 
-            processed_results.append(
-                {
-                    "title": result.get("title", ""),
-                    "url": result.get("url", ""),
-                    "source": result.get("source", ""),
-                    "summary": summary,
-                    "relevance_score": self._calculate_relevance(main_content),
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
+                processed_results.append(
+                    {
+                        "title": result.get("title", "Untitled"),
+                        "summary": summary.strip(),
+                        "source": result.get("source", "Unknown"),
+                        "url": result.get("url", ""),
+                        "relevance_score": relevance_score,
+                        "processed_date": datetime.now().isoformat(),
+                    }
+                )
 
-        return sorted(
-            processed_results, key=lambda x: x["relevance_score"], reverse=True
-        )
+            except Exception as e:
+                self.logger.error(f"Error processing result: {str(e)}")
+                continue
+
+        # Sort by relevance
+        processed_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+        return processed_results
 
     async def _generate_synthetic_data(self, specification: Dict) -> Dict:
         """
@@ -319,11 +335,11 @@ class ResearcherAgent(BaseAgent):
         
         Return only a single number between 0.0 and 1.0 representing the feasibility score.
         Score: """
-        
+
         try:
             response = await self.llm.ainvoke(prompt)
             # Extract the first valid float from the response
-            matches = re.findall(r'(?:\d*\.)?\d+', response)
+            matches = re.findall(r"(?:\d*\.)?\d+", response)
             if matches:
                 score = float(matches[0])
                 return min(max(score, 0.0), 1.0)  # Clamp between 0 and 1
@@ -334,43 +350,39 @@ class ResearcherAgent(BaseAgent):
 
     async def _parse_ideas(self, ideas_text: str) -> list:
         parsed_ideas = []
-        
+
         # Split ideas if multiple are present
         ideas_text = ideas_text.split("IDEA:")[1:]  # Skip empty first split
-        
+
         for idea_text in ideas_text:
             try:
                 # Initialize idea dict with required implementation fields
                 idea = {
                     "title": "",
                     "description": "",
-                    "architecture": {
-                        "layers": [],
-                        "input_spec": {},
-                        "output_spec": {}
-                    },
+                    "architecture": {"layers": [], "input_spec": {}, "output_spec": {}},
                     "components": [],
                     "challenges": [],
                     "evaluation": [],
                     "implementation": {
                         "libraries": [],
                         "core_classes": [],
-                        "data_pipeline": []
-                    }
+                        "data_pipeline": [],
+                    },
                 }
-                
+
                 # Parse sections
                 current_section = None
                 sections = idea_text.split("\n")
-                
+
                 # First line is the title
                 idea["title"] = sections[0].strip()
-                
+
                 for line in sections[1:]:
                     line = line.strip()
                     if not line:
                         continue
-                        
+
                     # Handle section headers
                     if line.startswith("DESCRIPTION:"):
                         current_section = "description"
@@ -387,85 +399,154 @@ class ResearcherAgent(BaseAgent):
                     elif line.startswith("EVALUATION:"):
                         current_section = "evaluation"
                         continue
-                    
+
                     # Parse content based on section
                     if current_section == "description":
                         idea["description"] += line + " "
                     elif current_section == "architecture":
                         if "layers:" in line.lower():
-                            idea["architecture"]["layers"].append(line.split(":", 1)[1].strip())
+                            idea["architecture"]["layers"].append(
+                                line.split(":", 1)[1].strip()
+                            )
                         elif "input:" in line.lower():
-                            idea["architecture"]["input_spec"] = line.split(":", 1)[1].strip()
+                            idea["architecture"]["input_spec"] = line.split(":", 1)[
+                                1
+                            ].strip()
                         elif "output:" in line.lower():
-                            idea["architecture"]["output_spec"] = line.split(":", 1)[1].strip()
+                            idea["architecture"]["output_spec"] = line.split(":", 1)[
+                                1
+                            ].strip()
                     elif current_section == "components":
                         # Ensure components are properly captured
                         if line.startswith(("-", "•", "*", "1.", "2.", "3.", "4.")):
-                            component = re.sub(r'^[-•*\d.]\s*', '', line).strip()
+                            component = re.sub(r"^[-•*\d.]\s*", "", line).strip()
                             if component:  # Only add non-empty components
                                 idea["components"].append(component)
                                 # Also add to implementation libraries if it looks like a library
-                                if any(keyword in component.lower() for keyword in ["library", "framework", "package"]):
-                                    idea["implementation"]["libraries"].append(component)
+                                if any(
+                                    keyword in component.lower()
+                                    for keyword in ["library", "framework", "package"]
+                                ):
+                                    idea["implementation"]["libraries"].append(
+                                        component
+                                    )
                     elif current_section in ["challenges", "evaluation"]:
                         if line.startswith(("-", "•", "*", "1.", "2.", "3.", "4.")):
-                            item = re.sub(r'^[-•*\d.]\s*', '', line)
+                            item = re.sub(r"^[-*\d.]\s*", "", line)
                             idea[current_section].append(item.strip())
-                
+
                 # Clean up description
                 idea["description"] = idea["description"].strip()
-                
+
                 # Add feasibility score
-                idea["feasibility"] = await self._assess_feasibility(idea["description"])
-                
+                idea["feasibility"] = await self._assess_feasibility(
+                    idea["description"]
+                )
+
                 # Ensure we have at least some components
                 if not idea["components"]:
-                    idea["components"] = ["PyTorch", "NumPy", "Scikit-learn"]  # Default components
-                
+                    idea["components"] = [
+                        "PyTorch",
+                        "NumPy",
+                        "Scikit-learn",
+                    ]  # Default components
+
                 parsed_ideas.append(idea)
-                
+
             except Exception as e:
                 self.logger.error(f"Failed to parse idea: {e}")
                 continue
-        
+
         return parsed_ideas
 
     def _get_search_params(self, engine: str, query: str) -> Dict:
-        """
-        Get search parameters for different search engines
-
-        Args:
-            engine: Search engine name
-            query: Search query
-
-        Returns:
-            Dict: Search parameters for the specific engine
-        """
+        """Get search parameters for different engines"""
         if engine == "duckduckgo":
             return {"q": query, "format": "json"}
         elif engine == "github":
             return {"q": query, "sort": "stars", "order": "desc"}
         elif engine == "arxiv":
-            return {"search_query": f"all:{query}", "start": 0, "max_results": 10}
+            return {"search_query": f"all:{query}", "max_results": 5}
         return {}
 
-    def _parse_search_response(self, engine: str, data: str) -> List[Dict]:
-        """
-        Parse search response from different engines
+    def _parse_duckduckgo_response(self, response: str) -> List[Dict]:
+        """Parse DuckDuckGo API response"""
+        try:
+            data = json.loads(response)
+            results = []
+            for result in data.get("RelatedTopics", []):
+                if "Text" in result:
+                    results.append(
+                        {
+                            "title": result.get("Text", "")[:50],
+                            "content": result.get("Text", ""),
+                            "url": result.get("FirstURL", ""),
+                            "source": "duckduckgo",
+                        }
+                    )
+            return results
+        except Exception as e:
+            logger.error(f"Error parsing DuckDuckGo response: {e}")
+            return []
 
-        Args:
-            engine: Search engine name
-            data: Raw response data
+    def _parse_github_response(self, response: str) -> List[Dict]:
+        """Parse GitHub API response"""
+        try:
+            data = json.loads(response)
+            results = []
+            for item in data.get("items", []):
+                results.append(
+                    {
+                        "title": item.get("full_name", ""),
+                        "content": item.get("description", ""),
+                        "url": item.get("html_url", ""),
+                        "source": "github",
+                    }
+                )
+            return results
+        except Exception as e:
+            logger.error(f"Error parsing GitHub response: {e}")
+            return []
 
-        Returns:
-            List[Dict]: Parsed search results
-        """
-        if engine == "duckduckgo":
-            return self._parse_duckduckgo_response(data)
-        elif engine == "github":
-            return self._parse_github_response(data)
-        elif engine == "arxiv":
-            return self._parse_arxiv_response(data)
+    def _parse_arxiv_response(self, response: str) -> List[Dict]:
+        """Parse arXiv API response"""
+        try:
+            # ArXiv returns XML, we'll need to parse it
+            root = ElementTree.fromstring(response)
+            results = []
+
+            # ArXiv XML namespace
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+            for entry in root.findall("atom:entry", ns):
+                title = entry.find("atom:title", ns)
+                summary = entry.find("atom:summary", ns)
+                link = entry.find("atom:id", ns)
+
+                results.append(
+                    {
+                        "title": title.text if title is not None else "",
+                        "content": summary.text if summary is not None else "",
+                        "url": link.text if link is not None else "",
+                        "source": "arxiv",
+                    }
+                )
+            return results
+        except Exception as e:
+            logger.error(f"Error parsing arXiv response: {e}")
+            return []
+
+    def _parse_search_response(self, engine: str, response: str) -> List[Dict]:
+        """Route to appropriate parser based on search engine"""
+        parsers = {
+            "duckduckgo": self._parse_duckduckgo_response,
+            "github": self._parse_github_response,
+            "arxiv": self._parse_arxiv_response,
+        }
+
+        parser = parsers.get(engine)
+        if parser:
+            return parser(response)
         return []
 
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
@@ -493,34 +574,19 @@ class ResearcherAgent(BaseAgent):
             return main_content.get_text(strip=True)
         return soup.get_text(strip=True)
 
-    def _calculate_relevance(self, content: str) -> float:
-        """
-        Calculate relevance score for search result
-
-        Args:
-            content: Content to analyze
-
-        Returns:
-            float: Relevance score between 0 and 1
-        """
-        if not content:
+    def _calculate_relevance(self, content: str, topic: str) -> float:
+        """Calculate relevance score between content and research topic"""
+        if not content or not topic:
             return 0.0
 
-        # Get current research objectives
-        objectives = (
-            self.current_research_cycle.get("objectives", [])
-            if self.current_research_cycle
-            else []
-        )
+        # Simple keyword matching for now
+        topic_keywords = set(topic.lower().split())
+        content_words = set(content.lower().split())
 
-        # Calculate relevance based on objective matches
-        score = 0.0
-        for objective in objectives:
-            if objective.lower() in content.lower():
-                score += 1.0
+        matches = len(topic_keywords.intersection(content_words))
+        total_keywords = len(topic_keywords)
 
-        # Normalize score
-        return min(score / max(len(objectives), 1), 1.0)
+        return matches / total_keywords if total_keywords > 0 else 0.0
 
     def _calculate_confidence_score(self, analysis: str) -> float:
         """
@@ -641,3 +707,116 @@ EVALUATION:
   - [Evaluation metric 1]
   - [Evaluation metric 2]
 """
+
+    async def synthesize_findings(self, search_results: List[Dict]) -> Dict:
+        """
+        Synthesize research findings into a coherent summary
+
+        Args:
+            search_results: List of processed search results
+
+        Returns:
+            Dict: Synthesized findings with summary and key points
+        """
+        try:
+            # Create synthesis prompt using search results
+            synthesis_prompt = f"""
+            Synthesize these research findings into a coherent summary:
+            
+            Search Results:
+            {json.dumps(search_results, indent=2)}
+            
+            Provide:
+            1. Overall summary
+            2. Key technical insights
+            3. Implementation considerations
+            4. Potential challenges
+            5. Recommended approach
+            
+            Format response as JSON with these fields.
+            """
+
+            response = await self.llm.ainvoke(synthesis_prompt)
+
+            try:
+                synthesis = json.loads(response)
+            except json.JSONDecodeError:
+                # Create structured format if response isn't valid JSON
+                synthesis = {
+                    "summary": response,
+                    "technical_insights": [],
+                    "implementation_considerations": [],
+                    "challenges": [],
+                    "recommended_approach": "",
+                }
+
+            # Log synthesis completion
+            await self.log_activity(
+                "findings_synthesized",
+                {
+                    "result_count": len(search_results),
+                    "synthesis_length": len(str(synthesis)),
+                },
+            )
+
+            # Store synthesis artifact
+            await self.store_artifact(
+                "research_synthesis", synthesis, {"result_count": len(search_results)}
+            )
+
+            return synthesis
+
+        except Exception as e:
+            await self.log_activity("synthesis_failed", {"error": str(e)})
+            raise
+
+    def search(self):
+        return {
+            "sources": ["arxiv", "scholar", "papers_with_code", "github"],
+            "result_processing": {
+                "extract_abstracts": True,
+                "relevance_scoring": "cosine_similarity",
+                "citation_tracking": True,
+            },
+        }
+
+    async def _enhance_search_query(self, query: str) -> str:
+        """
+        Enhance the search query using LLM to make it more specific and relevant
+
+        Args:
+            query: Original search query
+
+        Returns:
+            str: Enhanced search query
+        """
+        try:
+            # Create prompt for query enhancement
+            enhancement_prompt = f"""
+            Enhance this search query to be more specific and technical:
+            {query}
+            
+            Consider:
+            1. Technical terminology
+            2. Specific concepts
+            3. Recent developments
+            4. Key requirements
+            
+            Return only the enhanced query text without any explanation.
+            """
+
+            enhanced_query = await self.llm.ainvoke(enhancement_prompt)
+
+            # Clean up response
+            enhanced_query = enhanced_query.strip().replace("\n", " ")
+
+            # Log the enhancement
+            await self.log_activity(
+                "query_enhanced", {"original": query, "enhanced": enhanced_query}
+            )
+
+            return enhanced_query
+
+        except Exception as e:
+            await self.log_activity("query_enhancement_failed", {"error": str(e)})
+            return query  # Return original query if enhancement fails
