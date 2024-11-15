@@ -104,7 +104,7 @@ class CoderAgent(BaseAgent):
         Code to execute:
         {code}
         
-        Arguments: {args if args else 'None'}
+        Arguments: {args or 'None'}
         
         Do you approve this code execution? (yes/no)
         """
