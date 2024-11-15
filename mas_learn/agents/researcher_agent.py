@@ -471,18 +471,16 @@ class ResearcherAgent(BaseAgent):
         """Parse DuckDuckGo API response"""
         try:
             data = json.loads(response)
-            results = []
-            for result in data.get("RelatedTopics", []):
-                if "Text" in result:
-                    results.append(
-                        {
-                            "title": result.get("Text", "")[:50],
-                            "content": result.get("Text", ""),
-                            "url": result.get("FirstURL", ""),
-                            "source": "duckduckgo",
-                        }
-                    )
-            return results
+            return [
+                {
+                    "title": result.get("Text", "")[:50],
+                    "content": result.get("Text", ""),
+                    "url": result.get("FirstURL", ""),
+                    "source": "duckduckgo",
+                }
+                for result in data.get("RelatedTopics", [])
+                if "Text" in result
+            ]
         except Exception as e:
             logger.error(f"Error parsing DuckDuckGo response: {e}")
             return []
