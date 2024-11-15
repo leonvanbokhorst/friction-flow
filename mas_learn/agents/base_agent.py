@@ -98,7 +98,7 @@ class BaseAgent:
 
     async def learn(self, information: str) -> None:
         """Store new information in agent's memory."""
-        await self.log_activity("learn", {"information": information[:100] + "..."})
+        await self.log_activity("learn", {"information": f"{information[:100]}..."})
         await self.memory.add_memory(information)
         mas_logger.debug(f"Agent {self.name} learned: {information}", "BaseAgent")
 
