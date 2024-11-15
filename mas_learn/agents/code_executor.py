@@ -12,78 +12,33 @@ class CodeExecutorAgent(BaseAgent):
             orchestrator=orchestrator
         )
     
-    async def execute_code(self, code: str):
-        """Executes code after safety analysis and user permission"""
+    async def execute_code(self, code: str, globals: dict = None):
+        """Execute code with custom globals dictionary"""
         try:
-            # Get coder agent for code cleaning and recovery
-            coder_agent = self.orchestrator.agents.get("coder")
-            if coder_agent:
-                code = await coder_agent._clean_code_block(code)
+            # Use provided globals or create default ones
+            global_vars = globals or {"__name__": "__main__"}
             
-            # Perform static analysis
-            try:
-                ast.parse(code)
-            except SyntaxError as e:
-                # Attempt recovery through CoderAgent
-                if coder_agent:
-                    recovery_result = await coder_agent.recover_from_error(
-                        e, code, {"stage": "syntax_validation"}
-                    )
-                    if recovery_result["status"] == "success":
-                        code = await coder_agent._clean_code_block(recovery_result["fixed_code"])
-                        print("\nRecovered from syntax errors:")
-                        print("Changes made:", recovery_result["changes"])
-                    else:
-                        return f"Code contains syntax errors: {str(e)}"
-                else:
-                    return f"Code contains syntax errors: {str(e)}"
+            # Add safe builtins
+            if '__builtins__' not in global_vars:
+                global_vars['__builtins__'] = {
+                    'print': print,
+                    'len': len,
+                    'range': range,
+                    'list': list,
+                    'dict': dict,
+                    'str': str,
+                    'int': int,
+                    'float': float,
+                    'bool': bool,
+                    'tuple': tuple,
+                    'min': min,
+                    'max': max,
+                    'sum': sum,
+                }
             
-            # Ask for user permission
-            approval = await self.report_to_user({
-                "action": "execute_code",
-                "code": code,
-                "analysis": "Code passed static analysis"
-            })
-            
-            if approval.lower() != "yes":
-                await self.orchestrator.store_execution_result(
-                    code=code,
-                    output="Execution cancelled",
-                    status="cancelled",
-                    validation_results={"user_approval": "denied"}
-                )
-                return "Code execution cancelled by user"
-            
-            # Execute in controlled environment
-            try:
-                result = await self._safe_execute(code)
-                await self.orchestrator.store_execution_result(
-                    code=code,
-                    output=str(result),
-                    status="success",
-                    validation_results={"execution": "successful"}
-                )
-                return result
-            except Exception as e:
-                # Attempt runtime error recovery
-                coder_agent = self.orchestrator.agents.get("coder")
-                if coder_agent:
-                    recovery_result = await coder_agent.recover_from_error(
-                        e, code, {"stage": "runtime_execution"}
-                    )
-                    if recovery_result["status"] == "success":
-                        print("\nRecovered from runtime error:")
-                        print("Changes made:", recovery_result["changes"])
-                        return await self.execute_code(recovery_result["fixed_code"])
-                    
-                await self.orchestrator.store_execution_result(
-                    code=code,
-                    output=str(e),
-                    status="error",
-                    validation_results={"execution": "failed"}
-                )
-                return f"Execution error: {str(e)}"
-            
+            # Execute the code with the specified globals
+            exec(code, global_vars)
+            return "Code executed successfully"
         except Exception as e:
             return f"Execution failed: {str(e)}"
     
