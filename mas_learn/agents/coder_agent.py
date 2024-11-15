@@ -441,7 +441,7 @@ class CoderAgent(BaseAgent):
             elif line.startswith('-') and not line.startswith('---'):
                 changes.append(f"Removed: {line[1:].strip()}")
                 
-        return changes if changes else ["No significant changes detected"]
+        return changes or ["No significant changes detected"]
 
     async def error_recovery(self, code: str, error_msg: str) -> Dict:
         """
