@@ -338,9 +338,7 @@ class ResearcherAgent(BaseAgent):
 
         try:
             response = await self.llm.ainvoke(prompt)
-            # Extract the first valid float from the response
-            matches = re.findall(r"(?:\d*\.)?\d+", response)
-            if matches:
+            if matches := re.findall(r"(?:\d*\.)?\d+", response):
                 score = float(matches[0])
                 return min(max(score, 0.0), 1.0)  # Clamp between 0 and 1
             raise ValueError("No valid number found in response")
