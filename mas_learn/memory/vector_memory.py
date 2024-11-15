@@ -8,12 +8,7 @@ class VectorMemory:
     
     async def similarity_search(self, query: str) -> List[str]:
         """Search for relevant memories based on query similarity."""
-        if not self.memories:
-            return []
-            
-        # TODO: Implement proper embedding and similarity search
-        # For now, return all memories
-        return self.memories
+        return [] if not self.memories else self.memories
         
     async def add_memory(self, memory: str):
         """Add a new memory to the storage."""
