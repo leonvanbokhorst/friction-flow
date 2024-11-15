@@ -30,3 +30,12 @@ torch
 torchvision
 torchaudio
 torch-geometric
+
+# Web scraping
+aiohttp
+bs4
+
+# Langchain
+langchain
+langchain-community
+langchain-ollama

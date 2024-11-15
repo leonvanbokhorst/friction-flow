@@ -7,6 +7,7 @@ inputs.yaml
 config.yaml
 simulation_results/
 maml_results/
+temp_docs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
