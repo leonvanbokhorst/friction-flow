@@ -489,17 +489,15 @@ class ResearcherAgent(BaseAgent):
         """Parse GitHub API response"""
         try:
             data = json.loads(response)
-            results = []
-            for item in data.get("items", []):
-                results.append(
-                    {
-                        "title": item.get("full_name", ""),
-                        "content": item.get("description", ""),
-                        "url": item.get("html_url", ""),
-                        "source": "github",
-                    }
-                )
-            return results
+            return [
+                {
+                    "title": item.get("full_name", ""),
+                    "content": item.get("description", ""),
+                    "url": item.get("html_url", ""),
+                    "source": "github",
+                }
+                for item in data.get("items", [])
+            ]
         except Exception as e:
             logger.error(f"Error parsing GitHub response: {e}")
             return []
