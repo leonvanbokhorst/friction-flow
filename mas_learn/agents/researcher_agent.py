@@ -538,10 +538,7 @@ class ResearcherAgent(BaseAgent):
             "arxiv": self._parse_arxiv_response,
         }
 
-        parser = parsers.get(engine)
-        if parser:
-            return parser(response)
-        return []
+        return parser(response) if (parser := parsers.get(engine)) else []
 
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
         """
