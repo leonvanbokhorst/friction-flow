@@ -30,8 +30,7 @@ class MLAgent(BaseAgent):
             Dict[str, Any]: Training results and metrics
         """
         try:
-            result = await self._execute_training(specification)
-            return result
+            return await self._execute_training(specification)
         except Exception as e:
             return {
                 "status": "error",
