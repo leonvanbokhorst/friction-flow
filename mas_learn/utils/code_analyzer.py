@@ -149,13 +149,13 @@ class CodeAnalyzer:
                 self.generic_visit(node)
                 
             def visit_Call(self, node):
-                if isinstance(node.func, ast.Attribute):
-                    if node.func.attr in CodeAnalyzer.DANGEROUS_METHODS:
-                        self.dangerous_calls.append({
-                            "method": node.func.attr,
-                            "line": node.lineno,
-                            "risk": CodeAnalyzer.RISK_LEVELS[node.func.attr]
-                        })
+                if isinstance(node.func, ast.Attribute) and node.func.attr in CodeAnalyzer.DANGEROUS_METHODS:
+                    self.dangerous_calls.append({
+                        "method": node.func.attr,
+                        "line": node.lineno,
+                        "risk": CodeAnalyzer.RISK_LEVELS[node.func.attr]
+                    })
+
                 self.generic_visit(node)
 
         visitor = SecurityVisitor()
