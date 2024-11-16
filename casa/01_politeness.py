@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List
 import ollama
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from tqdm import tqdm
 import pandas as pd
 import os
@@ -23,6 +23,12 @@ class ExperimentParams:
     num_iterations: int = 100
     metrics_file: str = "casa_metrics_{experiment_id}_{datetime}.csv"
     results_dir: str = "casa/results"
+    response_limits: Dict = field(default_factory=lambda: {
+        "max_tokens": 150,  # based on typical human chat
+        "min_tokens": 25,   # avoid one-word responses
+        "max_ratio": 2.0,   # response:prompt length
+        "recovery_threshold": 5.0  # trigger length rebalancing
+    })
 
 
 class LLMAgent:
@@ -35,6 +41,11 @@ class LLMAgent:
         self.params = params
         self.conversation_history: List[Dict] = []
         self.agent_id = str(uuid.uuid4())
+        self.flow_metrics = {
+            "turn_balance": True,
+            "sustained_ratio": 1.0,
+            "recovery_attempts": 0
+        }
 
     def _construct_prompt(self, message: str) -> str:
         """Construct a prompt that includes agent context and personality."""
@@ -80,10 +91,12 @@ Please provide your response while maintaining your role and personality."""
                 options={
                     "temperature": self.params.temperature,
                     "top_p": self.params.top_p,
+                    "num_tokens": self.params.response_limits["max_tokens"],
                 },
             )
 
             response_text = response["response"]
+            response_text = self._apply_length_controls(message, response_text)
             success = True
             error = None
         except Exception as e:
@@ -92,6 +105,10 @@ Please provide your response while maintaining your role and personality."""
             error = str(e)
 
         end_time = datetime.now()
+        
+        # Calculate ratio first
+        ratio = len(response_text) / len(message) if len(message) > 0 else 0
+        
         response_data = {
             "timestamp": start_time.isoformat(),
             "input": message,
@@ -107,10 +124,13 @@ Please provide your response while maintaining your role and personality."""
             },
             "prompt_length": len(message),
             "response_length": len(response_text),
-            "ratio": len(response_text) / len(message) if len(message) > 0 else 0,
+            "ratio": ratio,
             "contains_question": contains_question,
             "references_previous": references_previous,
             "social_markers": social_markers,
+            "recovery_triggered": self._needs_recovery(ratio),
+            "recovery_successful": False,  # Will be updated in next turn
+            "turn_balance_score": self._calculate_turn_balance(),
         }
 
         self.conversation_history.append(response_data)
@@ -123,6 +143,30 @@ Please provide your response while maintaining your role and personality."""
         if "*" in text:  # Check for emotes like *smiles*
             markers.extend(word.strip("*") for word in text.split("*")[1::2])
         return markers
+
+    def _apply_length_controls(self, message: str, response: str) -> str:
+        """Apply length controls to maintain natural conversation patterns."""
+        current_ratio = len(response) / len(message) if len(message) > 0 else 0
+        
+        if current_ratio > self.params.response_limits["max_ratio"]:
+            # Truncate response to maintain ratio
+            max_length = int(len(message) * self.params.response_limits["max_ratio"])
+            response = response[:max_length].rsplit('.', 1)[0] + '.'
+            self.flow_metrics["recovery_attempts"] += 1
+        
+        return response
+
+    def _needs_recovery(self, ratio: float) -> bool:
+        """Check if response length needs rebalancing."""
+        return ratio > self.params.response_limits["recovery_threshold"]
+
+    def _calculate_turn_balance(self) -> float:
+        """Calculate turn balance score based on recent conversation history."""
+        if len(self.conversation_history) < 2:
+            return 1.0
+            
+        recent_ratios = [entry["ratio"] for entry in self.conversation_history[-3:]]
+        return sum(abs(1 - ratio) for ratio in recent_ratios) / len(recent_ratios)
 
 
 class CASAExperiment:
@@ -173,6 +217,9 @@ class CASAExperiment:
                 "response_time",
                 "temperature",
                 "top_p",
+                "recovery_triggered",
+                "recovery_successful",
+                "turn_balance_score",
             ]
         ).astype(
             {
@@ -189,6 +236,9 @@ class CASAExperiment:
                 "response_time": float,
                 "temperature": float,
                 "top_p": float,
+                "recovery_triggered": bool,
+                "recovery_successful": bool,
+                "turn_balance_score": float,
             }
         )
 
@@ -210,6 +260,9 @@ class CASAExperiment:
                     "response_time": turn_data["response_time"],
                     "temperature": turn_data["parameters"]["temperature"],
                     "top_p": turn_data["parameters"]["top_p"],
+                    "recovery_triggered": turn_data["recovery_triggered"],
+                    "recovery_successful": turn_data["recovery_successful"],
+                    "turn_balance_score": turn_data["turn_balance_score"],
                 }
             ]
         )
