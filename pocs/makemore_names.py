@@ -205,7 +205,9 @@ def generate_name(model: nn.Module, dataset: NameDataset, max_length: int = 20) 
             # Get model predictions for next character
             output = model(context)
             # Convert logits to probabilities
-            probs = torch.softmax(output, dim=1)
+            temperature = 0.8  # Lower = more conservative, higher = more creative
+            scaled_logits = output / temperature
+            probs = torch.softmax(scaled_logits, dim=1)
             # Sample next character index from probability distribution
             next_char_idx = torch.multinomial(probs, 1).item()
             next_char = dataset.itos[next_char_idx]
