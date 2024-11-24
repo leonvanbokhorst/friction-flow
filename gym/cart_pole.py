@@ -631,7 +631,7 @@ def train_agent(episodes=300):
         # Save best model
         if avg_reward > best_reward:
             best_reward = avg_reward
-            torch.save(policy.state_dict(), 'best_cartpole_model.pth')
+            torch.save(policy.state_dict(), 'gym/models/best_cartpole_model.pth')
         
         # Success criterion
         if avg_reward >= 195.0:
