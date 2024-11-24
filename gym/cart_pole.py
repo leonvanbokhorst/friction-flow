@@ -158,6 +158,11 @@ class CartPoleWithDisturbances(gym.Wrapper):
             if abs(next_state[1]) < abs(old_state[1]):
                 reward += 0.5
         
+        # Add sudden direction reversals
+        if np.random.random() < 0.02:  # 2% chance each step
+            self.wind_direction *= -1
+            self.current_wind *= -0.8  # Preserve 80% of force in new direction
+        
         return next_state, reward, done, truncated, info
 
 
