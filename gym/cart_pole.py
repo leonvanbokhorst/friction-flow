@@ -79,9 +79,9 @@ class CartPoleWithDisturbances(gym.Wrapper):
         # More frequent gusts
         if self.disturbance_countdown <= 0:
             self.gust_count += 1
-            gust = self.wind_direction * self.gust_strength * np.random.uniform(0.8, 1.4)  # Stronger gusts
+            gust = self.wind_direction * self.gust_strength * np.random.uniform(0.8, 1.4)
             self.current_wind += gust
-            self.disturbance_countdown = np.random.randint(50, 100)  # More frequent
+            self.disturbance_countdown = np.random.randint(30, 60)
         
         # Enhanced recovery mechanics
         wind_force = self.current_wind * self.wind_direction
