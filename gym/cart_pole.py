@@ -9,6 +9,7 @@ from collections import defaultdict
 import torch.optim as optim
 import random
 import torch.nn.functional as F
+from collections import deque
 
 torch.set_default_dtype(torch.float32)
 
@@ -93,21 +94,29 @@ class PolicyNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         
-        # Wider feature extractor
+        # State history for adaptation (store as numpy array)
+        self.state_history = np.zeros((10, 4), dtype=np.float32)  # Fixed size buffer
+        self.history_idx = 0
+        self.history_filled = False
+        
+        # Enhanced feature extraction
         self.features = nn.Sequential(
             nn.Linear(4, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
+            nn.Dropout(0.1),
             nn.Linear(256, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
         )
 
-        # Separate velocity prediction branch
-        self.velocity_pred = nn.Sequential(
+        # Adaptive control branch
+        self.adaptive_net = nn.Sequential(
             nn.Linear(256, 64),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 2)
         )
 
         # Value head
@@ -117,11 +126,18 @@ class PolicyNetwork(nn.Module):
             nn.Linear(64, 1)
         )
 
-        # Policy head with position awareness
+        # Policy head
         self.policy_head = nn.Sequential(
             nn.Linear(256, 64),
             nn.ReLU(),
             nn.Linear(64, 2)
+        )
+
+        # Velocity prediction
+        self.velocity_pred = nn.Sequential(
+            nn.Linear(256, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
         )
         
         self.temperature = 1.0
@@ -135,35 +151,65 @@ class PolicyNetwork(nn.Module):
         cart_position = x[..., 0]
         cart_velocity = x[..., 1]
 
-        # Position bias with proper broadcasting
-        position_bias = torch.zeros_like(logits)
-        position_bias[..., 0] = -0.5 * torch.sign(cart_position)
-        position_bias[..., 1] = 0.5 * torch.sign(cart_position)
+        # Stronger position control when near edges
+        edge_factor = torch.sigmoid(torch.abs(cart_position) * 2.0 - 1.0)
+        if len(x.shape) > 1:
+            edge_factor = edge_factor.unsqueeze(-1)
         
-        # Velocity influence
+        # Base position bias
+        position_bias = torch.zeros_like(logits)
+        position_bias[..., 0] = -0.3 * torch.sign(cart_position)
+        position_bias[..., 1] = 0.3 * torch.sign(cart_position)
+        
+        # Moving away detection with proper broadcasting
+        velocity_direction = torch.sign(cart_velocity)
+        position_direction = torch.sign(cart_position)
+        moving_away = (velocity_direction == position_direction).float()
+        
+        if len(x.shape) > 1:
+            moving_away = moving_away.unsqueeze(-1)
+            edge_factor = edge_factor.expand_as(position_bias)
+            moving_away = moving_away.expand_as(position_bias)
+        
+        # Apply corrections with proper broadcasting
+        correction_factor = torch.where(
+            moving_away > 0,
+            1.5 + edge_factor,
+            torch.ones_like(edge_factor)
+        )
+        position_bias = position_bias * correction_factor
+        
+        # Velocity damping with proper dimensions
         velocity_factor = torch.tanh(cart_velocity * 0.5)
         if len(x.shape) > 1:
-            velocity_factor = velocity_factor.unsqueeze(-1)
-        position_bias *= (1.0 - abs(velocity_factor))
-
+            velocity_factor = velocity_factor.unsqueeze(-1).expand_as(position_bias)
+        
+        # Apply velocity influence
+        position_bias *= (1.0 - torch.clamp(abs(velocity_factor), 0.0, 0.8))
+        
         # Stability calculation
-        stability = 1.0 - torch.min(
-            torch.abs(cart_position) + 0.5 * torch.abs(cart_velocity),
-            torch.tensor(1.0)
+        stability = 1.0 - torch.clamp(
+            torch.abs(cart_position) + 0.8 * torch.abs(cart_velocity),
+            0.0, 1.0
         )
         
-        # Noise with proper shape
-        noise_scale = 0.05 * (1.0 - stability)
+        # Noise with proper broadcasting
+        noise_scale = torch.clamp(0.05 * stability, 0.0, 0.1)
         if len(x.shape) > 1:
-            noise_scale = noise_scale.unsqueeze(-1)
+            noise_scale = noise_scale.unsqueeze(-1).expand_as(logits)
         noise = torch.randn_like(logits) * noise_scale
 
         # Temperature adjustment
-        self.temperature = 1.0 + 0.5 * (1.0 - stability.mean())
+        self.temperature = torch.clamp(1.0 + 0.5 * stability.mean(), 0.8, 1.5)
         
-        # Combined logic
-        logits = logits + position_bias * 0.3 + noise
-
+        # Final logits combination
+        edge_scale = 0.3 + 0.2 * edge_factor
+        if len(x.shape) > 1:
+            edge_scale = edge_scale.expand_as(logits)
+            
+        logits = logits + position_bias * edge_scale + noise
+        logits = torch.clamp(logits, -10.0, 10.0)
+        
         return torch.softmax(logits / self.temperature, dim=-1), value, velocity_pred
 
 
@@ -287,7 +333,15 @@ def train_agent(episodes=300):
     env = CartPoleWithDisturbances(gym.make("CartPole-v1"))
     policy = PolicyNetwork()
     optimizer = optim.Adam(policy.parameters(), lr=0.001)
-
+    
+    # Progressive difficulty
+    base_gust_strength = env.gust_strength
+    base_wind_scale = 0.05  # Initial physics effect
+    
+    # Adaptive learning
+    success_window = deque(maxlen=10)
+    adaptation_threshold = 0.8
+    
     running_reward = 10
     gamma = 0.99
     
@@ -317,6 +371,20 @@ def train_agent(episodes=300):
         episode_rewards = []
         episode_data = []
 
+        # Adjust difficulty based on recent performance
+        if len(success_window) == 10:
+            success_rate = sum(success_window) / 10
+            if success_rate > adaptation_threshold:
+                # Gradually increase difficulty
+                env.gust_strength = min(base_gust_strength * 1.2, 0.15)
+                env.wind_change_rate *= 1.1
+                base_wind_scale = min(base_wind_scale * 1.05, 0.08)
+            else:
+                # Reduce difficulty if struggling
+                env.gust_strength = base_gust_strength
+                env.wind_change_rate = 0.1
+                base_wind_scale = 0.05
+        
         while not done:
             state_tensor = torch.FloatTensor(state)
             probs, value, velocity_pred = policy(state_tensor)
@@ -396,6 +464,14 @@ def train_agent(episodes=300):
             print(f"Early stopping at episode {episode} - No improvement for {patience} episodes")
             break
 
+        # Dynamic reward shaping based on performance
+        if episode > 100:
+            position_weight = 2.0 * (1.0 - min(running_reward / 1000, 0.8))
+            velocity_weight = 1.0 * (1.0 - min(running_reward / 1000, 0.8))
+        else:
+            position_weight = 2.0
+            velocity_weight = 1.0
+            
         # Progressive difficulty
         if episode > 200:
             env.gust_strength *= 1.001  # Gradually increase challenge
