@@ -30,9 +30,9 @@ class CartPoleWithDisturbances(gym.Wrapper):
         self.last_wind_force = 0
         self.wind_buildup = 0
         
-        # Slightly stronger wind parameters
-        self.gust_strength = 0.03  # Increased from 0.02
-        self.wind_change_rate = 0.04  # Increased from 0.03
+        # More aggressive wind parameters
+        self.gust_strength = 0.10  # Doubled from 0.05
+        self.wind_change_rate = 0.06  # Increased from 0.04
         self.current_wind = 0
         self.wind_direction = np.random.choice([-1, 1])
         self.turbulence = 0.0
@@ -62,10 +62,10 @@ class CartPoleWithDisturbances(gym.Wrapper):
         old_state = self.unwrapped.state.copy()
         old_wind = self.current_wind
         
-        # Slightly more dynamic wind behavior
-        self.turbulence = 0.97 * self.turbulence + 0.03 * np.random.normal(0, 0.03)  # Increased from 0.02
-        self.current_wind = (0.993 * self.current_wind +  # Slightly faster change (was 0.995)
-                           0.007 * np.random.normal(0, 0.05) +  # Increased from 0.04
+        # More dynamic and aggressive wind behavior
+        self.turbulence = 0.95 * self.turbulence + 0.05 * np.random.normal(0, 0.04)  # Increased turbulence
+        self.current_wind = (0.99 * self.current_wind +  # Faster changes
+                           0.01 * np.random.normal(0, 0.07) +  # More random variation
                            self.turbulence)
         
         # Event detection
@@ -76,13 +76,12 @@ class CartPoleWithDisturbances(gym.Wrapper):
         if abs(self.current_wind) > abs(self.max_wind_force):
             self.max_wind_force = abs(self.current_wind)
         
-        # Periodic gusts
-        self.disturbance_countdown -= 1
+        # More frequent gusts
         if self.disturbance_countdown <= 0:
             self.gust_count += 1
-            gust = self.wind_direction * self.gust_strength * np.random.uniform(0.6, 1.2)
+            gust = self.wind_direction * self.gust_strength * np.random.uniform(0.8, 1.4)  # Stronger gusts
             self.current_wind += gust
-            self.disturbance_countdown = np.random.randint(70, 130)
+            self.disturbance_countdown = np.random.randint(50, 100)  # More frequent
         
         # Enhanced recovery mechanics
         wind_force = self.current_wind * self.wind_direction
