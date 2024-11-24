@@ -30,9 +30,9 @@ class CartPoleWithDisturbances(gym.Wrapper):
         self.last_wind_force = 0
         self.wind_buildup = 0
         
-        # Even gentler wind parameters
-        self.gust_strength = 0.02  # Further reduced
-        self.wind_change_rate = 0.03
+        # Slightly stronger wind parameters
+        self.gust_strength = 0.03  # Increased from 0.02
+        self.wind_change_rate = 0.04  # Increased from 0.03
         self.current_wind = 0
         self.wind_direction = np.random.choice([-1, 1])
         self.turbulence = 0.0
@@ -62,10 +62,10 @@ class CartPoleWithDisturbances(gym.Wrapper):
         old_state = self.unwrapped.state.copy()
         old_wind = self.current_wind
         
-        # Much gentler wind dynamics
-        self.turbulence = 0.98 * self.turbulence + 0.02 * np.random.normal(0, 0.02)
-        self.current_wind = (0.995 * self.current_wind + 
-                           0.005 * np.random.normal(0, 0.04) + 
+        # Slightly more dynamic wind behavior
+        self.turbulence = 0.97 * self.turbulence + 0.03 * np.random.normal(0, 0.03)  # Increased from 0.02
+        self.current_wind = (0.993 * self.current_wind +  # Slightly faster change (was 0.995)
+                           0.007 * np.random.normal(0, 0.05) +  # Increased from 0.04
                            self.turbulence)
         
         # Event detection
