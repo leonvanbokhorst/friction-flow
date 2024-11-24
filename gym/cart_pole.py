@@ -151,9 +151,18 @@ class CartPoleWithDisturbances(gym.Wrapper):
         self.unwrapped.state[0] += position_effect
         self.last_wind_force = wind_force
         
-        # Enhanced reward structure
-        next_state, reward, done, truncated, info = super().step(action)
+        # Get the original force from the action
+        force = self.unwrapped.force_mag if action == 1 else -self.unwrapped.force_mag
         
+        # Reduce the cart's power by 40% (previously 20%)
+        force *= 0.6  # Changed from 0.8
+        
+        # Apply the reduced force
+        self.unwrapped.force_mag = abs(force)
+        next_state, reward, done, truncated, info = super().step(1 if force > 0 else 0)
+        self.unwrapped.force_mag = 10.0  # Reset to default for next step
+        
+        # Enhanced reward structure
         if self.recovery_window and moving_to_center:
             # Progressive recovery bonus
             position_improvement = abs(old_state[0]) - abs(next_state[0])
