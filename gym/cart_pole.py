@@ -154,8 +154,8 @@ class CartPoleWithDisturbances(gym.Wrapper):
         # Get the original force from the action
         force = self.unwrapped.force_mag if action == 1 else -self.unwrapped.force_mag
         
-        # Reduce the cart's power by 30% (between 20% and 40% reduction)
-        force *= 0.7  # Changed from 0.6
+        # Reduce the cart's power by 20% (between 20% and 30% reduction)
+        force *= 0.8  # Changed from 0.75
         
         # Apply the reduced force
         self.unwrapped.force_mag = abs(force)
