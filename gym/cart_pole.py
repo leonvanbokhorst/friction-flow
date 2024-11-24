@@ -62,10 +62,10 @@ class CartPoleWithDisturbances(gym.Wrapper):
         old_state = self.unwrapped.state.copy()
         old_wind = self.current_wind
         
-        # More dynamic and aggressive wind behavior
-        self.turbulence = 0.95 * self.turbulence + 0.05 * np.random.normal(0, 0.04)  # Increased turbulence
-        self.current_wind = (0.99 * self.current_wind +  # Faster changes
-                           0.01 * np.random.normal(0, 0.07) +  # More random variation
+        # Much more turbulent wind behavior
+        self.turbulence = 0.95 * self.turbulence + 0.05 * np.random.normal(0, 0.08)  # Doubled from 0.04
+        self.current_wind = (0.99 * self.current_wind +
+                           0.01 * np.random.normal(0, 0.10) +  # Increased from 0.07
                            self.turbulence)
         
         # Event detection
