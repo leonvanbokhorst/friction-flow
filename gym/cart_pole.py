@@ -10,6 +10,8 @@ import torch.optim as optim
 import random
 import torch.nn.functional as F
 from collections import deque
+import copy
+import math
 
 torch.set_default_dtype(torch.float32)
 
@@ -22,11 +24,17 @@ class Personality:
 class CartPoleWithDisturbances(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
-        self.disturbance_countdown = 50
+        self.recovery_window = False
+        self.recovery_attempts = 0
+        self.successful_recoveries = 0
+        self.last_wind_force = 0
+        self.wind_buildup = 0
+        
+        # Even gentler wind parameters
+        self.gust_strength = 0.02  # Further reduced
+        self.wind_change_rate = 0.03
         self.current_wind = 0
-        self.wind_direction = 1
-        self.gust_strength = 0.1
-        self.wind_change_rate = 0.1
+        self.wind_direction = np.random.choice([-1, 1])
         self.turbulence = 0.0
         
         # Stats tracking
@@ -50,44 +58,108 @@ class CartPoleWithDisturbances(gym.Wrapper):
         return super().reset(**kwargs)
         
     def step(self, action):
-        # Gentler continuous wind with turbulence
-        self.turbulence = 0.95 * self.turbulence + 0.05 * np.random.normal(0, 0.05)
-        self.current_wind = (0.98 * self.current_wind + 
-                           0.02 * np.random.normal(0, 0.1) + 
+        # Track state before wind
+        old_state = self.unwrapped.state.copy()
+        old_wind = self.current_wind
+        
+        # Much gentler wind dynamics
+        self.turbulence = 0.98 * self.turbulence + 0.02 * np.random.normal(0, 0.02)
+        self.current_wind = (0.995 * self.current_wind + 
+                           0.005 * np.random.normal(0, 0.04) + 
                            self.turbulence)
         
-        # Add sudden events
+        # Event detection
+        if abs(self.current_wind - old_wind) > 0.02:
+            self.strength_changes += 1
+        if np.sign(self.current_wind) != np.sign(old_wind) and abs(self.current_wind) > 0.01:
+            self.direction_changes += 1
+        if abs(self.current_wind) > abs(self.max_wind_force):
+            self.max_wind_force = abs(self.current_wind)
+        
+        # Periodic gusts
         self.disturbance_countdown -= 1
         if self.disturbance_countdown <= 0:
-            event_type = np.random.choice(['gust', 'direction_change', 'strength_change'],
-                                        p=[0.3, 0.4, 0.3])
-            
-            if event_type == 'gust':
-                # Weaker gusts
-                gust = self.wind_direction * self.gust_strength * np.random.uniform(0.8, 1.5)
-                self.current_wind += gust
-                self.gust_count += 1
-            elif event_type == 'direction_change':
-                self.wind_direction *= -1
-                self.current_wind *= -0.2
-                self.direction_changes += 1
-            else:  # strength_change
-                self.gust_strength = np.clip(
-                    self.gust_strength + np.random.uniform(-0.05, 0.05),
-                    0.05, 0.15
-                )
-                self.strength_changes += 1
-            
-            self.disturbance_countdown = np.random.randint(60, 120)
+            self.gust_count += 1
+            gust = self.wind_direction * self.gust_strength * np.random.uniform(0.6, 1.2)
+            self.current_wind += gust
+            self.disturbance_countdown = np.random.randint(70, 130)
         
-        # Apply gentler disturbance to the cart
+        # Enhanced recovery mechanics
         wind_force = self.current_wind * self.wind_direction
-        self.max_wind_force = max(self.max_wind_force, abs(wind_force))
+        max_manageable_force = 0.15 * (1.0 - self.wind_buildup * 0.3)
+        wind_force = np.clip(wind_force, -max_manageable_force, max_manageable_force)
         
-        self.unwrapped.state[1] += wind_force * 0.05
-        self.unwrapped.state[0] += wind_force * 0.003
+        cart_velocity = self.unwrapped.state[1]
+        cart_position = self.unwrapped.state[0]
         
-        return super().step(action)
+        # More sensitive recovery detection
+        moving_to_center = np.sign(cart_velocity) != np.sign(cart_position)
+        in_danger = abs(cart_position) > 0.65  # Even earlier detection
+        approaching_danger = abs(cart_position) > 0.45 and abs(cart_velocity) > 0.4  # More sensitive
+        
+        # Progressive recovery assistance
+        if in_danger and moving_to_center:
+            self.recovery_window = True
+            self.recovery_attempts += 1
+            wind_force *= 0.45  # Stronger reduction
+        elif approaching_danger and moving_to_center:
+            wind_force *= 0.65  # More early assistance
+        
+        # Apply effects with enhanced counter-steering
+        velocity_effect = wind_force * 0.025
+        position_effect = wind_force * 0.001
+        
+        # Enhanced counter-steering bonus
+        if np.sign(cart_velocity) != np.sign(wind_force):
+            # More aggressive position-based reduction
+            base_reduction = 0.45
+            position_factor = abs(cart_position) / 1.8  # More aggressive scaling
+            reduction = base_reduction * (1.0 + position_factor)
+            
+            velocity_effect *= reduction
+            position_effect *= reduction
+            
+            # More lenient recovery detection
+            if self.recovery_window and (
+                abs(cart_position) < 0.95 or  # Higher threshold
+                abs(cart_position) < abs(old_state[0])  # Any improvement counts
+            ):
+                self.successful_recoveries += 1
+                self.recovery_window = False
+                self.wind_buildup = 0
+        
+        # Enhanced damping curve
+        position_factor = abs(cart_position)
+        if position_factor > 0.8:
+            damping = 0.7 + 0.2 * (position_factor - 0.8)  # Progressive damping
+            velocity_effect *= damping
+            position_effect *= damping
+        
+        # Apply final effects with damping
+        if abs(cart_position) > 1.0:
+            # Extra damping when far from center
+            damping = 0.8
+            velocity_effect *= damping
+            position_effect *= damping
+        
+        self.unwrapped.state[1] += velocity_effect
+        self.unwrapped.state[0] += position_effect
+        self.last_wind_force = wind_force
+        
+        # Enhanced reward structure
+        next_state, reward, done, truncated, info = super().step(action)
+        
+        if self.recovery_window and moving_to_center:
+            # Progressive recovery bonus
+            position_improvement = abs(old_state[0]) - abs(next_state[0])
+            recovery_bonus = 1.0 + max(0, position_improvement * 2.0)
+            reward += recovery_bonus
+            
+            # Extra bonus for velocity control
+            if abs(next_state[1]) < abs(old_state[1]):
+                reward += 0.5
+        
+        return next_state, reward, done, truncated, info
 
 
 class PolicyNetwork(nn.Module):
@@ -151,64 +223,90 @@ class PolicyNetwork(nn.Module):
         cart_position = x[..., 0]
         cart_velocity = x[..., 1]
 
-        # Stronger position control when near edges
-        edge_factor = torch.sigmoid(torch.abs(cart_position) * 2.0 - 1.0)
-        if len(x.shape) > 1:
-            edge_factor = edge_factor.unsqueeze(-1)
-        
-        # Base position bias
+        # Initialize all biases first
         position_bias = torch.zeros_like(logits)
-        position_bias[..., 0] = -0.3 * torch.sign(cart_position)
-        position_bias[..., 1] = 0.3 * torch.sign(cart_position)
+        velocity_bias = torch.zeros_like(logits)
+
+        # Position control parameters
+        position_threshold = 0.5
+        position_danger = 0.8
+        high_position = torch.abs(cart_position) > position_threshold
+        position_emergency = torch.abs(cart_position) > position_danger
         
-        # Moving away detection with proper broadcasting
-        velocity_direction = torch.sign(cart_velocity)
-        position_direction = torch.sign(cart_position)
-        moving_away = (velocity_direction == position_direction).float()
+        # Velocity control parameters
+        velocity_threshold = 0.8
+        velocity_danger = 1.2
+        high_velocity = torch.abs(cart_velocity) > velocity_threshold
         
+        # Calculate position bias
+        position_factor = torch.abs(cart_position) * 1.0
+        position_bias[..., 0] = -1.0 * torch.sign(cart_position) * position_factor
+        position_bias[..., 1] = 1.0 * torch.sign(cart_position) * position_factor
+        
+        # Calculate velocity bias
+        velocity_bias[..., 0] = -0.8 * torch.sign(cart_velocity)
+        velocity_bias[..., 1] = 0.8 * torch.sign(cart_velocity)
+        
+        # Handle tensor dimensions
         if len(x.shape) > 1:
-            moving_away = moving_away.unsqueeze(-1)
-            edge_factor = edge_factor.expand_as(position_bias)
-            moving_away = moving_away.expand_as(position_bias)
+            high_velocity = high_velocity.unsqueeze(-1).expand_as(velocity_bias)
+            high_position = high_position.unsqueeze(-1).expand_as(position_bias)
+            position_emergency = position_emergency.unsqueeze(-1).expand_as(position_bias)
+        else:
+            high_velocity = high_velocity.unsqueeze(-1).expand(2)
+            high_position = high_position.unsqueeze(-1).expand(2)
+            position_emergency = position_emergency.unsqueeze(-1).expand(2)
         
-        # Apply corrections with proper broadcasting
-        correction_factor = torch.where(
-            moving_away > 0,
-            1.5 + edge_factor,
-            torch.ones_like(edge_factor)
-        )
-        position_bias = position_bias * correction_factor
-        
-        # Velocity damping with proper dimensions
-        velocity_factor = torch.tanh(cart_velocity * 0.5)
-        if len(x.shape) > 1:
-            velocity_factor = velocity_factor.unsqueeze(-1).expand_as(position_bias)
-        
-        # Apply velocity influence
-        position_bias *= (1.0 - torch.clamp(abs(velocity_factor), 0.0, 0.8))
-        
-        # Stability calculation
-        stability = 1.0 - torch.clamp(
-            torch.abs(cart_position) + 0.8 * torch.abs(cart_velocity),
-            0.0, 1.0
+        # Apply conditional biases
+        position_bias = torch.where(
+            high_position,
+            position_bias * 1.2,
+            position_bias
         )
         
-        # Noise with proper broadcasting
-        noise_scale = torch.clamp(0.05 * stability, 0.0, 0.1)
+        position_bias = torch.where(
+            position_emergency,
+            position_bias * 1.5,
+            position_bias
+        )
+        
+        velocity_bias = torch.where(
+            high_velocity,
+            velocity_bias * 1.5,
+            velocity_bias
+        )
+        
+        # Momentum bonus
+        moving_to_center = torch.sign(cart_velocity) != torch.sign(cart_position)
+        momentum_bonus = torch.where(
+            moving_to_center.unsqueeze(-1).expand_as(position_bias),
+            position_bias * 1.1,
+            position_bias * 0.95
+        )
+        
+        # Exploration noise
+        base_noise = 0.1
+        position_factor = torch.clamp(1.0 - torch.abs(cart_position) / 2.0, 0.4, 1.0)
+        velocity_factor = torch.clamp(1.0 - torch.abs(cart_velocity) / 2.0, 0.4, 1.0)
+        noise_scale = base_noise * position_factor * velocity_factor
+        
         if len(x.shape) > 1:
             noise_scale = noise_scale.unsqueeze(-1).expand_as(logits)
-        noise = torch.randn_like(logits) * noise_scale
-
-        # Temperature adjustment
-        self.temperature = torch.clamp(1.0 + 0.5 * stability.mean(), 0.8, 1.5)
+        else:
+            noise_scale = noise_scale.unsqueeze(-1).expand(2)
         
-        # Final logits combination
-        edge_scale = 0.3 + 0.2 * edge_factor
-        if len(x.shape) > 1:
-            edge_scale = edge_scale.expand_as(logits)
-            
-        logits = logits + position_bias * edge_scale + noise
-        logits = torch.clamp(logits, -10.0, 10.0)
+        noise = torch.randn_like(logits) * noise_scale
+        
+        # Combine all biases
+        total_bias = momentum_bonus + velocity_bias
+        logits = logits + total_bias + noise
+        logits = torch.clamp(logits, -8.0, 8.0)
+        
+        # Dynamic temperature
+        self.temperature = torch.clamp(
+            0.8 + 0.4 * position_factor.mean(),
+            0.6, 1.2
+        )
         
         return torch.softmax(logits / self.temperature, dim=-1), value, velocity_pred
 
@@ -220,7 +318,15 @@ class AIStats:
         self.stability_scores = []
         self.recovery_count = 0
         self.position_history = []
-
+        
+        # Initialize with default values
+        self.oscillations = 0
+        self.time_in_danger_zone = 0
+        self.max_recovery_time = 0
+        self.energy_usage = [0]  # Initialize with one data point
+        self.last_action = None
+        self.recovery_windows = []
+        
     def add_decision(self, action):
         self.decisions[action] += 1
 
@@ -237,21 +343,58 @@ class AIStats:
         self.position_history.append(abs(cart_position))
 
     def log_recovery(self, old_state, new_state):
-        # Detect if we recovered from a bad position
-        old_angle = abs(old_state[2])
-        new_angle = abs(new_state[2])
-        if old_angle > 0.2 and new_angle < 0.1:
+        # Detect successful wind counter-steering
+        old_position = abs(old_state[0])
+        new_position = abs(new_state[0])
+        old_velocity = old_state[1]
+        
+        # Count as recovery if:
+        # 1. Was in danger zone
+        # 2. Moving back to center
+        # 3. Position improved
+        if (old_position > 1.0 and
+            np.sign(old_velocity) != np.sign(old_state[0]) and
+            new_position < old_position):
             self.recovery_count += 1
 
+    def add_state(self, state, action):
+        # Existing tracking
+        self.add_position(state)
+        self.add_stability(state)
+        
+        # Track oscillations
+        if self.last_action is not None and action != self.last_action:
+            self.oscillations += 1
+            self.energy_usage.append(1)
+        else:
+            self.energy_usage.append(0)
+        self.last_action = action
+        
+        # Track danger zone time
+        if abs(state[0]) > 0.5:
+            self.time_in_danger_zone += 1
+            
     def get_summary(self):
+        # Protect against empty lists
+        stability = mean(self.stability_scores) if self.stability_scores else 0
+        avg_reaction = mean(self.reaction_times) if self.reaction_times else 0
+        avg_position = mean(self.position_history) if self.position_history else 0
+        max_pos = max(self.position_history) if self.position_history else 0
+        
         summary = {
             "left_right_ratio": f"{self.decisions[0]}:{self.decisions[1]}",
-            "avg_reaction_ms": f"{mean(self.reaction_times):.1f}ms",
-            "stability_score": f"{mean(self.stability_scores):.2f}/1.00",
+            "avg_reaction_ms": f"{avg_reaction:.1f}ms",
+            "stability_score": f"{stability:.2f}/1.00",
             "recoveries": self.recovery_count,
-            "decision_consistency": f"{min(self.decisions.values()) / max(self.decisions.values()):.2f}",
-            "avg_distance_from_center": f"{mean(self.position_history):.2f}",
-            "max_deviation": f"{max(self.position_history):.2f}",
+            "decision_consistency": f"{min(self.decisions.values()) / max(self.decisions.values()):.2f}" if self.decisions else "0.00",
+            "avg_distance_from_center": f"{avg_position:.2f}",
+            "max_deviation": f"{max_pos:.2f}",
+            
+            # Protected new metrics
+            "oscillations_per_100": f"{(self.oscillations / max(len(self.position_history), 1) * 100):.1f}",
+            "danger_zone_percent": f"{(self.time_in_danger_zone / max(len(self.position_history), 1) * 100):.1f}%",
+            "energy_efficiency": f"{(1 - mean(self.energy_usage)):.2f}/1.00",
+            "avg_recovery_time": f"{mean(self.recovery_windows):.1f}" if self.recovery_windows else "N/A",
         }
         return summary
 
@@ -261,6 +404,7 @@ def run_demonstration(policy, episodes=3):
     env = CartPoleWithDisturbances(gym.make("CartPole-v1", render_mode="human"))
     stats = AIStats()
     total_steps = []
+    failure_states = []  # Track failure states
 
     for episode in range(episodes):
         state, _ = env.reset()
@@ -293,7 +437,18 @@ def run_demonstration(policy, episodes=3):
             last_state = state
 
             if done or truncated:
+                failure_states.append({
+                    'position': state[0],
+                    'velocity': state[1],
+                    'angle': state[2],
+                    'angular_velocity': state[3],
+                    'steps': steps,
+                    'wind_force': env.last_wind_force
+                })
                 print(f"Episode lasted {steps} steps!")
+                print(f"Failed at: pos={state[0]:.2f}, vel={state[1]:.2f}, "
+                      f"angle={state[2]:.2f}, ang_vel={state[3]:.2f}")
+                print(f"Last wind force: {env.last_wind_force:.3f}")
                 total_steps.append(steps)
                 break
 
@@ -321,162 +476,178 @@ def run_demonstration(policy, episodes=3):
     print("=" * 50)
     print(f"💨 Max Wind Force: {env.max_wind_force:.2f}")
     print(f"🌬️  Total Gusts: {env.gust_count}")
-    print(f"↔️  Direction Changes: {env.direction_changes}")
+    print(f"️  Direction Changes: {env.direction_changes}")
     print(f"📊 Strength Adjustments: {env.strength_changes}")
     print(f"🎯 Average Steps Between Events: {mean([50, 100]):.1f}")
+
+    # Print failure analysis
+    print(f"\n🔍 Failure Analysis:")
+    print("=" * 50)
+    positions = [f['position'] for f in failure_states]
+    velocities = [f['velocity'] for f in failure_states]
+    angles = [f['angle'] for f in failure_states]
+    ang_vels = [f['angular_velocity'] for f in failure_states]
+    
+    print(f"Position at failure: {mean(positions):.2f} ± {stdev(positions):.2f}")
+    print(f"Velocity at failure: {mean(velocities):.2f} ± {stdev(velocities):.2f}")
+    print(f"Angle at failure: {mean(angles):.2f} ± {stdev(angles):.2f}")
+    print(f"Angular velocity at failure: {mean(ang_vels):.2f} ± {stdev(ang_vels):.2f}")
+    print(f"Wind force at failure: {mean([f['wind_force'] for f in failure_states]):.3f}")
+
+    print(f"\n🎯 Additional Performance Metrics:")
+    print("=" * 50)
+    print(f"🔄 Oscillations per 100 steps: {summary['oscillations_per_100']}")
+    print(f"⚠️  Time in Danger Zone: {summary['danger_zone_percent']}")
+    print(f"⚡ Energy Efficiency: {summary['energy_efficiency']}")
+    print(f"🏃 Average Recovery Time: {summary['avg_recovery_time']}")
 
     return total_steps
 
 
 def train_agent(episodes=300):
-    print("\n🎓 Training agent...")
     env = CartPoleWithDisturbances(gym.make("CartPole-v1"))
     policy = PolicyNetwork()
     optimizer = optim.Adam(policy.parameters(), lr=0.001)
     
-    # Progressive difficulty
-    base_gust_strength = env.gust_strength
-    base_wind_scale = 0.05  # Initial physics effect
+    # Experience replay buffer
+    replay_buffer = deque(maxlen=10000)
+    min_replay_size = 1000
+    batch_size = 64
     
-    # Adaptive learning
-    success_window = deque(maxlen=10)
-    adaptation_threshold = 0.8
-    
-    running_reward = 10
+    # Training parameters
     gamma = 0.99
+    epsilon_start = 1.0
+    epsilon_end = 0.05
+    epsilon_decay = 5000  # Slower decay
     
-    # Adjusted training parameters
-    batch_size = 128
-    entropy_weight = 0.01
-    value_weight = 0.5
-    ppo_epochs = 4
-    clip_epsilon = 0.2
-
-    # More patient early stopping
-    patience = 50
-    min_episodes = 150
-    best_reward = 0
-    patience_counter = 0
-    no_improvement_threshold = 0.85
+    # Tracking variables
+    episode_rewards = []
+    best_reward = float('-inf')
+    steps_done = 0
     
-    # Stronger emphasis on position control
-    position_weight = 2.0  # Increased
-    velocity_weight = 1.0
+    # Adjust reward shaping to be more position-aware
+    def calculate_reward(state, next_state, reward):
+        # Stronger penalties for position and velocity
+        position_penalty = (abs(next_state[0]) ** 2) * 0.2  # Increased from 0.1
+        velocity_penalty = abs(next_state[1]) * 0.15  # Increased from 0.1
+        
+        # Reduced angle penalties since those are good
+        angle_penalty = abs(next_state[2]) * 1.5  # Reduced from 2.0
+        ang_velocity_penalty = abs(next_state[3]) * 0.1
+        
+        # Add centering bonus
+        centering_bonus = 0.1 if (abs(next_state[0]) < abs(state[0]) and 
+                                 abs(next_state[0]) > 0.5) else 0
+        
+        # Add velocity damping bonus
+        damping_bonus = 0.1 if (abs(next_state[1]) < abs(state[1]) and 
+                               abs(next_state[0]) > 0.5) else 0
+        
+        return (reward 
+                - position_penalty 
+                - velocity_penalty 
+                - angle_penalty 
+                - ang_velocity_penalty
+                + centering_bonus
+                + damping_bonus)
     
     for episode in range(episodes):
         state, _ = env.reset()
-        last_position = state[0]
-        last_velocity = state[1]
+        episode_reward = 0
         done = False
-        episode_rewards = []
-        episode_data = []
-
-        # Adjust difficulty based on recent performance
-        if len(success_window) == 10:
-            success_rate = sum(success_window) / 10
-            if success_rate > adaptation_threshold:
-                # Gradually increase difficulty
-                env.gust_strength = min(base_gust_strength * 1.2, 0.15)
-                env.wind_change_rate *= 1.1
-                base_wind_scale = min(base_wind_scale * 1.05, 0.08)
-            else:
-                # Reduce difficulty if struggling
-                env.gust_strength = base_gust_strength
-                env.wind_change_rate = 0.1
-                base_wind_scale = 0.05
         
         while not done:
-            state_tensor = torch.FloatTensor(state)
-            probs, value, velocity_pred = policy(state_tensor)
+            # Epsilon-greedy with decay
+            epsilon = epsilon_end + (epsilon_start - epsilon_end) * \
+                     math.exp(-steps_done / epsilon_decay)
+            steps_done += 1
             
-            # Progressive exploration strategy
-            exploration_rate = max(0.3, 1.0 - episode / (episodes * 0.7))
-            if random.random() < exploration_rate:
-                action = random.randint(0, 1)
-                action_tensor = torch.tensor(action)
+            # Action selection
+            if random.random() < epsilon:
+                action = env.action_space.sample()
             else:
-                action_tensor = Categorical(probs).sample()
+                with torch.no_grad():
+                    state_tensor = torch.FloatTensor(state).unsqueeze(0)
+                    probs, _, _ = policy(state_tensor)
+                    action = torch.argmax(probs).item()
             
-            action = action_tensor.item()
+            # Take action
             next_state, reward, done, truncated, _ = env.step(action)
-            current_position = next_state[0]
-            current_velocity = next_state[1]
-
-            # Modified reward structure
-            modified_reward = (
-                reward * 2.0 +
-                position_weight * (1.0 - abs(current_position)) +  # Position control
-                velocity_weight * (1.0 - abs(current_velocity)) +  # Velocity damping
-                -3.0 * (abs(current_position) > 1.5) +            # Stronger boundary penalty
-                1.0 * (abs(current_position) < 0.5)               # Center bonus
-            )
-
-            episode_data.append({
-                'state': state_tensor,
-                'action': action_tensor,
-                'reward': modified_reward,
-                'value': value,
-                'log_prob': Categorical(probs).log_prob(action_tensor)
+            done = done or truncated
+            
+            shaped_reward = calculate_reward(state, next_state, reward)
+            
+            # Store transition
+            replay_buffer.append({
+                'state': state,
+                'action': action,
+                'reward': shaped_reward,
+                'next_state': next_state,
+                'done': done
             })
             
-            episode_rewards.append(modified_reward)
+            # Training step
+            if len(replay_buffer) >= min_replay_size:
+                batch = random.sample(replay_buffer, batch_size)
+                update_policy(policy, optimizer, batch, gamma)
+            
             state = next_state
-            last_position = current_position
-            last_velocity = current_velocity
-            done = done or truncated
-
-        # More gradual learning rate decay
-        if running_reward > 150:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] *= 0.995
-
-        # Process episode data
-        returns = compute_returns(episode_data, gamma=0.99)
-        advantages = compute_advantages(returns, [t['value'] for t in episode_data])
+            episode_reward += reward
         
-        # PPO update loop
-        for _ in range(ppo_epochs):
-            # Mini-batch updates
-            indices = np.random.permutation(len(episode_data))
-            for start_idx in range(0, len(episode_data), batch_size):
-                batch_indices = indices[start_idx:start_idx + batch_size]
-                update_policy(policy, optimizer, episode_data, returns, advantages, 
-                            batch_indices, clip_epsilon, entropy_weight, value_weight)
-
-        # Logging and early stopping
-        episode_reward = sum(episode_rewards)
-        running_reward = 0.05 * episode_reward + 0.95 * running_reward
-
+        episode_rewards.append(episode_reward)
+        avg_reward = np.mean(episode_rewards[-30:]) if len(episode_rewards) >= 30 else np.mean(episode_rewards)
+        
+        # Progress reporting
         if episode % 10 == 0:
-            print(f"Episode {episode}: Reward = {episode_reward:.1f}, Running = {running_reward:.1f}")
+            print(f"Episode {episode}: Steps = {steps_done}, "
+                  f"Reward = {episode_reward:.1f}, "
+                  f"Avg = {avg_reward:.1f}, "
+                  f"Epsilon = {epsilon:.3f}")
         
-        # Don't allow early stopping before minimum episodes
-        if episode < min_episodes:
-            patience_counter = 0
-        elif episode_reward > best_reward * no_improvement_threshold:
-            if episode_reward > best_reward:
-                best_reward = episode_reward
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            
-        if patience_counter >= patience and episode >= min_episodes:
-            print(f"Early stopping at episode {episode} - No improvement for {patience} episodes")
+        # Save best model
+        if avg_reward > best_reward:
+            best_reward = avg_reward
+            torch.save(policy.state_dict(), 'best_cartpole_model.pth')
+        
+        # Success criterion
+        if avg_reward >= 195.0:
+            print(f"\n🎉 Solved at episode {episode}!")
             break
-
-        # Dynamic reward shaping based on performance
-        if episode > 100:
-            position_weight = 2.0 * (1.0 - min(running_reward / 1000, 0.8))
-            velocity_weight = 1.0 * (1.0 - min(running_reward / 1000, 0.8))
-        else:
-            position_weight = 2.0
-            velocity_weight = 1.0
             
-        # Progressive difficulty
-        if episode > 200:
-            env.gust_strength *= 1.001  # Gradually increase challenge
-
     return policy
+
+def update_policy(policy, optimizer, batch, gamma):
+    # Prepare batch data
+    states = torch.FloatTensor(np.array([x['state'] for x in batch]))
+    actions = torch.LongTensor([x['action'] for x in batch])
+    rewards = torch.FloatTensor([x['reward'] for x in batch])
+    next_states = torch.FloatTensor(np.array([x['next_state'] for x in batch]))
+    dones = torch.FloatTensor([x['done'] for x in batch])
+    
+    # Current values
+    probs, values, _ = policy(states)
+    values = values.squeeze(-1)
+    
+    # Next values for TD learning
+    with torch.no_grad():
+        _, next_values, _ = policy(next_states)
+        next_values = next_values.squeeze(-1)
+        targets = rewards + gamma * next_values * (1 - dones)
+    
+    # Compute losses
+    value_loss = F.mse_loss(values, targets)
+    advantage = (targets - values.detach())
+    policy_loss = -torch.mean(torch.log(probs[range(len(actions)), actions]) * advantage)
+    entropy_loss = -torch.mean(torch.sum(probs * torch.log(probs + 1e-10), dim=1))
+    
+    # Add entropy bonus to encourage exploration
+    loss = policy_loss + 0.5 * value_loss - 0.01 * entropy_loss
+    
+    # Optimize
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
+    optimizer.step()
 
 def compute_returns(episode_data, gamma):
     returns = []
@@ -492,39 +663,6 @@ def compute_advantages(returns, values):
     advantages = returns - torch.tensor([v.item() for v in values], dtype=torch.float32)
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     return advantages
-
-def update_policy(policy, optimizer, episode_data, returns, advantages, batch_indices, 
-                 clip_epsilon, entropy_weight, value_weight):
-    # Get batch data
-    states = torch.stack([episode_data[i]['state'] for i in batch_indices])
-    old_log_probs = torch.stack([episode_data[i]['log_prob'].detach() for i in batch_indices])
-    actions = torch.stack([episode_data[i]['action'] for i in batch_indices])
-    batch_returns = returns[batch_indices].detach().float()
-    batch_advantages = advantages[batch_indices].detach().float()
-
-    # Get current policy distributions
-    new_probs, new_values, velocity_pred = policy(states)
-    dist = Categorical(new_probs)
-    new_log_probs = dist.log_prob(actions)
-    entropy = dist.entropy().mean()
-
-    # PPO policy loss
-    ratio = (new_log_probs - old_log_probs).exp()
-    surrogate1 = ratio * batch_advantages
-    surrogate2 = torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon) * batch_advantages
-    policy_loss = -torch.min(surrogate1, surrogate2).mean()
-
-    # Value loss
-    value_loss = F.mse_loss(new_values.squeeze(-1), batch_returns)
-
-    # Combined loss
-    loss = policy_loss + value_weight * value_loss - entropy_weight * entropy
-
-    optimizer.zero_grad()
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
-    optimizer.step()
-
 
 def main():
     print("🎪 Welcome to the CartPole Challenge! 🎪")
