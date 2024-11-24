@@ -43,6 +43,8 @@ class CartPoleWithDisturbances(gym.Wrapper):
         self.direction_changes = 0
         self.strength_changes = 0
         
+        self.steps_beyond_done = 0
+        
     def reset(self, **kwargs):
         self.disturbance_countdown = np.random.randint(30, 70)
         self.current_wind = 0
@@ -55,9 +57,13 @@ class CartPoleWithDisturbances(gym.Wrapper):
         self.gust_count = 0
         self.direction_changes = 0
         self.strength_changes = 0
+        self.steps_beyond_done = 0
         return super().reset(**kwargs)
         
     def step(self, action):
+        # Track steps
+        self.steps_beyond_done += 1
+        
         # Track state before wind
         old_state = self.unwrapped.state.copy()
         old_wind = self.current_wind
@@ -162,6 +168,11 @@ class CartPoleWithDisturbances(gym.Wrapper):
         if np.random.random() < 0.02:  # 2% chance each step
             self.wind_direction *= -1
             self.current_wind *= -0.8  # Preserve 80% of force in new direction
+        
+        # Add oscillating base wind
+        time_factor = self.steps_beyond_done / 100.0  # normalized time
+        oscillation = 0.15 * np.sin(time_factor * 2.0 * np.pi)  # oscillating component
+        self.current_wind += oscillation
         
         return next_state, reward, done, truncated, info
 
