@@ -367,24 +367,24 @@ def main():
     global_best_reward = float('-inf')  # Track best reward across all phases
     
     # Training phases
-    # for phase in range(10):
-    #     print(f"\n📈 Training Phase {phase + 1}")
+    for phase in range(10):
+        print(f"\n📈 Training Phase {phase + 1}")
         
-    #     try:
-    #         checkpoint = torch.load("gym/models/hopper_best.pth", weights_only=True)
-    #         ai.load_model(checkpoint)
-    #         global_best_reward = float(checkpoint.get('best_reward', float('-inf')))
-    #         print(f"Loaded best model (previous best reward: {global_best_reward:.1f})")
-    #     except (FileNotFoundError, RuntimeError) as e:
-    #         print(f"No saved model found: {e}")
-    #         print("Starting with untrained agent")
+        try:
+            checkpoint = torch.load("gym/models/hopper_best.pth", weights_only=True)
+            ai.load_model(checkpoint)
+            global_best_reward = float(checkpoint.get('best_reward', float('-inf')))
+            print(f"Loaded best model (previous best reward: {global_best_reward:.1f})")
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"No saved model found: {e}")
+            print("Starting with untrained agent")
         
-    #     # Pass global best reward to train
-    #     success = ai.train(num_episodes=100, previous_best=global_best_reward)
+        # Pass global best reward to train
+        success = ai.train(num_episodes=100, previous_best=global_best_reward)
         
-    #     if success:
-    #         print("🎯 Reached solution threshold! Moving to demonstration.")
-    #         break
+        if success:
+            print("🎯 Reached solution threshold! Moving to demonstration.")
+            break
     
     # Load and play best model
     print("\n🦘 Loading best model for demonstration...")
