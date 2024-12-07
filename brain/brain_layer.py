@@ -7,6 +7,7 @@ from datetime import datetime
 from logging import getLogger
 import json
 from enum import Enum
+from functools import lru_cache
 
 logger = getLogger(__name__)
 
@@ -76,10 +77,6 @@ class BrainLayer:
             metadata={"hnsw:space": "cosine"}
         )
         
-        # Add embedding cache
-        self._thought_embeddings: Dict[str, List[float]] = {}
-        self._cache_size = 100  # Maximum number of cached embeddings
-
         self._initialize_memory()
 
     def _initialize_memory(self) -> None:
@@ -159,26 +156,22 @@ class BrainLayer:
                 "context": "error in processing"
             }
 
-    def _analyze_thought_coherence(self, 
-                                 current_thought: str, 
-                                 prev_thoughts: List[str]) -> float:
-        """Analyze thought coherence with history."""
+    @lru_cache(maxsize=100)
+    def _get_embedding(self, thought: str) -> List[float]:
+        """Get embedding for a thought with LRU caching."""
+        return self.llm.embeddings(
+            model=EMBEDDING_MODEL,
+            prompt=thought
+        ).embedding
+
+    def _analyze_thought_coherence(self, current_thought: str, prev_thoughts: List[str]) -> float:
+        """Analyze thought coherence with history using cached embeddings."""
         if not prev_thoughts:
             return 1.0
         
         try:
-            current_embedding = self.llm.embeddings(
-                model=EMBEDDING_MODEL,
-                prompt=current_thought
-            ).embedding
-            
-            prev_embeddings = [
-                self.llm.embeddings(
-                    model=EMBEDDING_MODEL,
-                    prompt=thought
-                ).embedding 
-                for thought in prev_thoughts[-3:]
-            ]
+            current_embedding = self._get_embedding(current_thought)
+            prev_embeddings = [self._get_embedding(thought) for thought in prev_thoughts[-3:]]
             
             similarities = [
                 np.dot(current_embedding, prev_emb) / 
@@ -306,37 +299,14 @@ class BrainLayer:
             raise
 
     def _analyze_patterns(self) -> float:
-        """Analyze patterns in recent thought history with embedding caching."""
+        """Analyze patterns usingcached embeddings."""
         if len(self.thought_history) < 2:
             return 0.0
         
         try:
-            # Get recent thoughts
             recent_thoughts = [t['current_thought'] for t in self.thought_history[-3:]]
-            embeddings = []
+            embeddings = [self._get_embedding(thought) for thought in recent_thoughts]
             
-            for thought in recent_thoughts:
-                # Try to get embedding from cache
-                if thought in self._thought_embeddings:
-                    embeddings.append(self._thought_embeddings[thought])
-                else:
-                    # Generate and cache new embedding
-                    embedding = self.llm.embeddings(
-                        model=EMBEDDING_MODEL,
-                        prompt=thought
-                    ).embedding
-                    
-                    # Cache the embedding
-                    self._thought_embeddings[thought] = embedding
-                    embeddings.append(embedding)
-                    
-                    # Maintain cache size
-                    if len(self._thought_embeddings) > self._cache_size:
-                        # Remove oldest entry
-                        oldest_thought = next(iter(self._thought_embeddings))
-                        del self._thought_embeddings[oldest_thought]
-            
-            # Calculate similarity matrix
             similarities = []
             for i in range(len(embeddings)):
                 for j in range(i + 1, len(embeddings)):
@@ -345,7 +315,6 @@ class BrainLayer:
                     )
                     similarities.append(sim)
                     
-            # Return average similarity as pattern strength
             return float(np.mean(similarities)) if similarities else 0.0
             
         except Exception as e:
