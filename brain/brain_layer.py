@@ -115,6 +115,7 @@ class BrainLayer:
 
     def add_emotional_layer(self, thought: str) -> Dict[str, Union[str, float]]:
         """Enhanced emotional processing with valence and context."""
+        response_text = ""
         try:
             emotional_prompt = (
                 "Analyze this thought and return ONLY a JSON object with format "
