@@ -358,7 +358,7 @@ class StateAwareLLM:
         """Adjust temperature based on emotional state."""
         # Get values with defaults
         intensity = emotional_state.get('intensity', 0.5)
-        valence = emotional_state.get('valence', 0.0)
+        valence = max(-1.0, min(1.0, emotional_state.get('valence', 0.0)))
         
         # More variable when emotional, more focused when neutral
         temperature = self.base_temperature + (intensity * 0.3)
