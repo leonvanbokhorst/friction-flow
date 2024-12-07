@@ -29,7 +29,6 @@ pygraphviz
 torch
 torchvision
 torchaudio
-torch-geometric
 
 # Web scraping
 aiohttp
@@ -43,4 +42,3 @@ langchain-ollama
 # Gymnasium
 gymnasium
 pygame
-"gymnasium[other]"
