@@ -76,6 +76,10 @@ class BrainLayer:
             metadata={"hnsw:space": "cosine"}
         )
         
+        # Add embedding cache
+        self._thought_embeddings: Dict[str, List[float]] = {}
+        self._cache_size = 100  # Maximum number of cached embeddings
+
         self._initialize_memory()
 
     def _initialize_memory(self) -> None:
@@ -302,20 +306,35 @@ class BrainLayer:
             raise
 
     def _analyze_patterns(self) -> float:
-        """Analyze patterns in recent thought history."""
+        """Analyze patterns in recent thought history with embedding caching."""
         if len(self.thought_history) < 2:
             return 0.0
         
         try:
-            # Get recent thought embeddings
+            # Get recent thoughts
             recent_thoughts = [t['current_thought'] for t in self.thought_history[-3:]]
-            embeddings = [
-                self.llm.embeddings(
-                    model=EMBEDDING_MODEL,
-                    prompt=thought
-                ).embedding 
-                for thought in recent_thoughts
-            ]
+            embeddings = []
+            
+            for thought in recent_thoughts:
+                # Try to get embedding from cache
+                if thought in self._thought_embeddings:
+                    embeddings.append(self._thought_embeddings[thought])
+                else:
+                    # Generate and cache new embedding
+                    embedding = self.llm.embeddings(
+                        model=EMBEDDING_MODEL,
+                        prompt=thought
+                    ).embedding
+                    
+                    # Cache the embedding
+                    self._thought_embeddings[thought] = embedding
+                    embeddings.append(embedding)
+                    
+                    # Maintain cache size
+                    if len(self._thought_embeddings) > self._cache_size:
+                        # Remove oldest entry
+                        oldest_thought = next(iter(self._thought_embeddings))
+                        del self._thought_embeddings[oldest_thought]
             
             # Calculate similarity matrix
             similarities = []
