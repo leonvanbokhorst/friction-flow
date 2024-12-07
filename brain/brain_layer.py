@@ -356,7 +356,8 @@ class StateAwareLLM:
         
     def adjust_temperature(self, emotional_state: Dict) -> float:
         """Adjust temperature based on emotional state."""
-        intensity = emotional_state['intensity']
+        # Get values with defaults
+        intensity = emotional_state.get('intensity', 0.5)
         valence = emotional_state.get('valence', 0.0)
         
         # More variable when emotional, more focused when neutral
@@ -372,22 +373,40 @@ class StateAwareLLM:
                             brain_state: Dict) -> str:
         """Create prompt with emotional and memory context."""
         
-        emotional_state = brain_state['emotional_state']
-        metacog = brain_state['metacognition']
+        # Get values with defaults if missing
+        emotional_state = brain_state.get('emotional_state', {
+            'primary_emotion': 'neutral',
+            'intensity': 0.5
+        })
+        metacog = brain_state.get('metacognition', {
+            'thought_complexity': 0.5,
+            'emotional_intensity': 0.5
+        })
+        related_memories = brain_state.get('related_memories', {
+            'thoughts': []
+        })
         
         # Base contextual prompt
         context_parts = [
-            f"Given your current emotional state of {emotional_state['primary_emotion']},",
-            f"with an intensity of {emotional_state['intensity']},",
-            f"and considering these related memories: {brain_state['related_memories']['thoughts'][:2]},",
-            "respond to the following input naturally, letting your state influence your response style:",
-            f"{user_input}"
+            f"Given your current emotional state of {emotional_state.get('primary_emotion', 'neutral')},",
+            f"with an intensity of {emotional_state.get('intensity', 0.5)},",
         ]
         
+        # Add memories if available
+        if related_memories.get('thoughts'):
+            memories = related_memories['thoughts'][:2]
+            context_parts.append(f"and considering these related memories: {memories},")
+        
+        # Add the core prompt
+        context_parts.extend([
+            "respond to the following input naturally, letting your state influence your response style:",
+            f"{user_input}"
+        ])
+        
         # Add state-specific modifications
-        if metacog['thought_complexity'] > 0.7:
+        if metacog.get('thought_complexity', 0.5) > 0.7:
             context_parts.insert(0, "Taking a thoughtful, nuanced approach,")
-        elif metacog['emotional_intensity'] > 0.8:
+        elif metacog.get('emotional_intensity', 0.5) > 0.8:
             context_parts.insert(0, "Responding with appropriate emotional depth,")
             
         return " ".join(context_parts)
@@ -407,15 +426,20 @@ class StateAwareLLM:
                        response: str, 
                        brain_state: Dict) -> str:
         """Format response based on current state."""
-        emotional_state = brain_state['emotional_state']
-        metacog = brain_state['metacognition']
+        # Get values with defaults
+        emotional_state = brain_state.get('emotional_state', {
+            'intensity': 0.5
+        })
+        metacog = brain_state.get('metacognition', {
+            'emotional_intensity': 0.5
+        })
         
         # Tired or resting state = shorter responses
-        if metacog['emotional_intensity'] < 0.3 or brain_state['brain_state'] == 'resting':
+        if metacog.get('emotional_intensity', 0.5) < 0.3 or brain_state.get('brain_state') == 'resting':
             response = ' '.join(response.split()[:50]) + "..."
             
         # High emotion = more expressive punctuation
-        if emotional_state['intensity'] > 0.8:
+        if emotional_state.get('intensity', 0.5) > 0.8:
             response = self.add_emotional_emphasis(response, emotional_state)
             
         return response
@@ -424,16 +448,20 @@ class StateAwareLLM:
                              response: str, 
                              emotional_state: Dict) -> str:
         """Add appropriate emotional emphasis to response."""
-        if emotional_state['valence'] > 0.8:  # Very positive
+        valence = emotional_state.get('valence', 0.0)
+        
+        if valence > 0.8:  # Very positive
             response = response.replace('!', '!!').replace('.', '!')
-        elif emotional_state['valence'] < -0.8:  # Very negative
+        elif valence < -0.8:  # Very negative
             response = response.replace('!', '...').replace('.', '...')
         return response
 
     def respond(self, user_input: str) -> str:
+        # Process through brain layer first
         brain_state = self.brain.process_thought(user_input)
-        new_state = self.check_state_transition(brain_state)
         
+        # Check for state transition
+        new_state = self.check_state_transition(brain_state)
         if new_state:
             old_state = self.brain.brain_state
             self.brain.brain_state = new_state
@@ -443,17 +471,9 @@ class StateAwareLLM:
                 return "[Yawning and stretching...] Good morning! I'm awake and ready to chat! 😊"
             elif new_state == BrainState.RESTING:
                 return "[Getting sleepy...] Mmm... time for a short rest. Wake me if you need me! 😴"
-                
-        # Process through brain layer
-        brain_state = self.brain.process_thought(user_input)
         
-        # Check for state transition
-        new_state = self.check_state_transition(brain_state)
-        if new_state:
-            self.brain.brain_state = new_state
-            transition_msg = f"\n[State transition: {self.brain.brain_state.value}]\n"
-        else:
-            transition_msg = f"\n[Current state: {self.brain.brain_state.value}]\n"
+        # Add transition message
+        transition_msg = f"\n[Current state: {self.brain.brain_state.value}]\n"
             
         # State-specific behaviors
         if self.brain.brain_state == BrainState.RESTING:
@@ -465,8 +485,11 @@ class StateAwareLLM:
         else:
             prompt = self.create_context_prompt(user_input, brain_state)
             
-        # Generate and format response
-        temperature = self.adjust_temperature(brain_state['emotional_state'])
+        # Generate and format response with error handling
+        temperature = self.adjust_temperature(brain_state.get('emotional_state', {
+            'intensity': 0.5,
+            'valence': 0.0
+        }))
         response = self.generate_response(prompt, temperature)
         final_response = self.format_response(response, brain_state)
         
