@@ -331,39 +331,182 @@ class BrainLayer:
         except Exception as e:
             logger.error(f"Error in pattern analysis: {str(e)}")
             return 0.0
-
-def main() -> None:
-    """Enhanced main execution with diverse thought patterns."""
-    brain = BrainLayer()
-    
-    # Process a sequence of thoughts
-    thoughts = [
-        "I am a human",
-        "I wonder about consciousness",
-        "The universe is vast",
-        "I want to sleep",
-        "People are stupid",
-        "Learning brings joy",
-        "Fear holds me back",
-        "Music moves my soul",
-        "Time passes quickly",
-        "Nature is beautiful"
-    ]
-    
-    for thought in thoughts:
-        print(f"\nProcessing thought: {thought}")
-        print("-" * 50)
-        result = brain.process_thought(thought)
         
-        if result.get('rest_reason'):
-            print(f"Rest State: {result['rest_reason']}")
-            continue
+from typing import Dict, Any, List, Optional
+import numpy as np
+
+class StateAwareLLM:
+    def __init__(self, brain_layer: BrainLayer):
+        self.brain = brain_layer
+        # Add rest cycle tracking
+        self.rest_duration = 0
+        self.max_rest_duration = 2  # Number of interactions before waking
+        self.base_temperature = 0.7  # Add default base temperature
+        
+    def check_state_transition(self, brain_state: Dict) -> Optional[BrainState]:
+        """Enhanced state transition logic with proper wake/sleep cycles."""
+        current_state = self.brain.brain_state
+        
+        # Handle REST state special cases
+        if current_state == BrainState.RESTING:
+            self.rest_duration += 1
             
-        print(f"Brain State: {result['brain_state']}")
-        print(f"Emotional State: {result['emotional_state']}")
-        print(f"Metacognition: {result['metacognition']}")
-        print(f"Related Memories: {result['related_memories']['thoughts'][:2]}")
-        print()
+            # Check for wake triggers
+            wake_words = ['wake', 'morning', 'hello', 'hey']
+            if any(word in brain_state['current_thought'].lower() for word in wake_words) or \
+               self.rest_duration >= self.max_rest_duration:
+                self.rest_duration = 0
+                return BrainState.ACTIVE
+                
+        # Check for sleep triggers
+        sleep_words = ['sleep', 'tired', 'night', 'rest']
+        if any(word in brain_state['current_thought'].lower() for word in sleep_words):
+            return BrainState.RESTING
+            
+        return None
+        
+    def adjust_temperature(self, emotional_state: Dict) -> float:
+        """Adjust temperature based on emotional state."""
+        intensity = emotional_state['intensity']
+        valence = emotional_state.get('valence', 0.0)
+        
+        # More variable when emotional, more focused when neutral
+        temperature = self.base_temperature + (intensity * 0.3)
+        
+        # Add slight randomness based on emotional valence
+        temperature += valence * 0.1
+        
+        return min(max(temperature, 0.1), 1.0)  # Keep between 0.1 and 1.0
+
+    def create_context_prompt(self, 
+                            user_input: str, 
+                            brain_state: Dict) -> str:
+        """Create prompt with emotional and memory context."""
+        
+        emotional_state = brain_state['emotional_state']
+        metacog = brain_state['metacognition']
+        
+        # Base contextual prompt
+        context_parts = [
+            f"Given your current emotional state of {emotional_state['primary_emotion']},",
+            f"with an intensity of {emotional_state['intensity']},",
+            f"and considering these related memories: {brain_state['related_memories']['thoughts'][:2]},",
+            "respond to the following input naturally, letting your state influence your response style:",
+            f"{user_input}"
+        ]
+        
+        # Add state-specific modifications
+        if metacog['thought_complexity'] > 0.7:
+            context_parts.insert(0, "Taking a thoughtful, nuanced approach,")
+        elif metacog['emotional_intensity'] > 0.8:
+            context_parts.insert(0, "Responding with appropriate emotional depth,")
+            
+        return " ".join(context_parts)
+
+    def generate_response(self, 
+                         prompt: str, 
+                         temperature: float) -> str:
+        """Generate response using the LLM."""
+        response = self.brain.llm.generate(
+            model=MODEL_NAME,
+            prompt=prompt,
+            options={"temperature": temperature}
+        )
+        return response.response
+
+    def format_response(self, 
+                       response: str, 
+                       brain_state: Dict) -> str:
+        """Format response based on current state."""
+        emotional_state = brain_state['emotional_state']
+        metacog = brain_state['metacognition']
+        
+        # Tired or resting state = shorter responses
+        if metacog['emotional_intensity'] < 0.3 or brain_state['brain_state'] == 'resting':
+            response = ' '.join(response.split()[:50]) + "..."
+            
+        # High emotion = more expressive punctuation
+        if emotional_state['intensity'] > 0.8:
+            response = self.add_emotional_emphasis(response, emotional_state)
+            
+        return response
+
+    def add_emotional_emphasis(self, 
+                             response: str, 
+                             emotional_state: Dict) -> str:
+        """Add appropriate emotional emphasis to response."""
+        if emotional_state['valence'] > 0.8:  # Very positive
+            response = response.replace('!', '!!').replace('.', '!')
+        elif emotional_state['valence'] < -0.8:  # Very negative
+            response = response.replace('!', '...').replace('.', '...')
+        return response
+
+    def respond(self, user_input: str) -> str:
+        brain_state = self.brain.process_thought(user_input)
+        new_state = self.check_state_transition(brain_state)
+        
+        if new_state:
+            old_state = self.brain.brain_state
+            self.brain.brain_state = new_state
+            
+            # Handle state transition messages
+            if new_state == BrainState.ACTIVE and old_state == BrainState.RESTING:
+                return "[Yawning and stretching...] Good morning! I'm awake and ready to chat! 😊"
+            elif new_state == BrainState.RESTING:
+                return "[Getting sleepy...] Mmm... time for a short rest. Wake me if you need me! 😴"
+                
+        # Process through brain layer
+        brain_state = self.brain.process_thought(user_input)
+        
+        # Check for state transition
+        new_state = self.check_state_transition(brain_state)
+        if new_state:
+            self.brain.brain_state = new_state
+            transition_msg = f"\n[State transition: {self.brain.brain_state.value}]\n"
+        else:
+            transition_msg = f"\n[Current state: {self.brain.brain_state.value}]\n"
+            
+        # State-specific behaviors
+        if self.brain.brain_state == BrainState.RESTING:
+            return f"{transition_msg}[Taking a moment to process... breathing...]"
+        elif self.brain.brain_state == BrainState.REFLECTING:
+            prompt = f"Reflect deeply on: {user_input}"
+        elif self.brain.brain_state == BrainState.LEARNING:
+            prompt = f"Analyze patterns in: {user_input}"
+        else:
+            prompt = self.create_context_prompt(user_input, brain_state)
+            
+        # Generate and format response
+        temperature = self.adjust_temperature(brain_state['emotional_state'])
+        response = self.generate_response(prompt, temperature)
+        final_response = self.format_response(response, brain_state)
+        
+        return f"{transition_msg}{final_response}"
+
+def main():
+    brain = BrainLayer()
+    llm = StateAwareLLM(brain)
+    
+    print("Interactive Brain State Demo")
+    print("Type 'quit' to exit\n")
+    
+    while True:
+        user_input = input("\nYou: ")
+        if user_input.lower() == 'quit':
+            break
+            
+        print("\nProcessing...")
+        print("-" * 50)
+        
+        response = llm.respond(user_input)
+        print(f"Brain: {response}")
+        
+        # Show emotional trending
+        trend = brain.emotional_memory.get_emotional_trend()
+        print(f"\nEmotional Trend:")
+        print(f"- Stability: {trend['stability']:.2f}")
+        print(f"- Momentum: {trend['emotional_momentum']:.2f}")
+        print("-" * 50)
 
 if __name__ == "__main__":
     main()
