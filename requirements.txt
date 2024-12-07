@@ -21,7 +21,6 @@ wandb
 matplotlib
 seaborn
 pydot
-pygraphviz
 
 # PyTorch ecosystem 
 torch
