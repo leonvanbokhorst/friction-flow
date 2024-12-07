@@ -299,7 +299,7 @@ class BrainLayer:
             raise
 
     def _analyze_patterns(self) -> float:
-        """Analyze patterns using cached embeddings."""
+        """Analyze patterns usingcached embeddings."""
         if len(self.thought_history) < 2:
             return 0.0
         
