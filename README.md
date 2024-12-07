@@ -1,5 +1,7 @@
 # Friction Flow
 
+[![CI](https://github.com/leonvanbokhorst/friction-flow/actions/workflows/ci.yml/badge.svg)](https://github.com/leonvanbokhorst/friction-flow/actions/workflows/ci.yml)
+
 ## Project Overview
 
 Friction Flow is an advanced Python-based research project aimed at developing a framework for analyzing and simulating complex human behavior and group interaction based on Narrative Field Dynamics. This project leverages AI and machine learning techniques, with a focus on integrating Large Language Models (LLMs) for natural language-based decision making and interactions.
