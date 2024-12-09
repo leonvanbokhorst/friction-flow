@@ -76,21 +76,23 @@ axes[0].imshow(X[0].reshape(28, 28), cmap="gray")
 axes[0].set_title("Original\n(784 pixels)")
 axes[0].axis("off")
 
-# Try different compression levels
+# Initialize PCA with maximum number of components needed
+max_components = max(n_components_list)
+pca = PCA(n_components=max_components)
+
+# Fit and transform the data once
+X_transformed = pca.fit_transform(X)
+
+# Try different compression levels by using subset of components
 for idx, n_comp in enumerate(n_components_list, 1):
-    # Initialize PCA with desired number of components
-    # PCA will find the n_comp directions of maximum variance in the data
-    pca = PCA(n_components=n_comp)
-    
-    # fit_transform does two steps:
-    # 1. Compute the principal components (eigenvectors) from the data
-    # 2. Project the data onto these components, reducing dimensionality from 784 to n_comp
-    X_transformed = pca.fit_transform(X)
-    
-    # inverse_transform projects the data back to original space (784 dimensions)
-    # This reconstruction uses only the top n_comp components
-    # The result is an approximation of the original data
-    X_reconstructed = pca.inverse_transform(X_transformed)
+    # Slice the transformed data and components for reconstruction
+    X_transformed_subset = X_transformed[:, :n_comp]
+    components_subset = pca.components_[:n_comp]
+
+    # Reconstruct using subset of components
+    X_reconstructed = np.dot(X_transformed_subset, components_subset)
+    # Add the mean back since PCA removes it during fitting
+    X_reconstructed = X_reconstructed + pca.mean_
 
     # Display reconstructed image
     axes[idx].imshow(X_reconstructed[0].reshape(28, 28), cmap="gray")
