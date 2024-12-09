@@ -12,9 +12,7 @@ pytest-mock
 # ML & LLM
 ollama
 chromadb
-llama-cpp-python
 transformers
-PyWavelets
 scikit-learn
 sentence-transformers
 wandb
@@ -23,7 +21,6 @@ wandb
 matplotlib
 seaborn
 pydot
-pygraphviz
 
 # PyTorch ecosystem 
 torch
