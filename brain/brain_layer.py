@@ -320,9 +320,6 @@ class BrainLayer:
         except Exception as e:
             logger.error(f"Error in pattern analysis: {str(e)}")
             return 0.0
-        
-from typing import Dict, Any, List, Optional
-import numpy as np
 
 class StateAwareLLM:
     def __init__(self, brain_layer: BrainLayer):
