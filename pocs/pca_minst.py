@@ -66,42 +66,28 @@ plt.axis("off")
 plt.show()
 
 # PCA Compression Experiment
-# We'll try different numbers of principal components to see the trade-off
-# between compression ratio and image quality
 n_components_list = [10, 30, 50, 100]
 fig, axes = plt.subplots(1, len(n_components_list) + 1, figsize=(15, 3))
 
-# Show original image (784 dimensions)
+# Show original image
 axes[0].imshow(X[0].reshape(28, 28), cmap="gray")
 axes[0].set_title("Original\n(784 pixels)")
 axes[0].axis("off")
 
-# Initialize PCA with maximum number of components needed
-max_components = max(n_components_list)
-pca = PCA(n_components=max_components)
-
-# Fit and transform the data once
-X_transformed = pca.fit_transform(X)
-
-# Try different compression levels by using subset of components
+# Try different compression levels
 for idx, n_comp in enumerate(n_components_list, 1):
-    # Slice the transformed data and components for reconstruction
-    X_transformed_subset = X_transformed[:, :n_comp]
-    components_subset = pca.components_[:n_comp]
+    # Initialize and fit PCA for each number of components
+    pca = PCA(n_components=n_comp)
+    X_transformed = pca.fit_transform(X)
 
-    # Reconstruct using subset of components
-    X_reconstructed = np.dot(X_transformed_subset, components_subset)
-    # Add the mean back since PCA removes it during fitting
-    X_reconstructed = X_reconstructed + pca.mean_
+    # Reconstruct the image
+    X_reconstructed = pca.inverse_transform(X_transformed)
 
     # Display reconstructed image
     axes[idx].imshow(X_reconstructed[0].reshape(28, 28), cmap="gray")
-    # Show compression ratio - how much of original data we're using
     axes[idx].set_title(f"{n_comp} components\n({n_comp/784*100:.1f}% of data)")
     axes[idx].axis("off")
 
-    # explained_variance_ratio_ shows how much variance each principal component captures
-    # The sum tells us total variance preserved in our compressed representation
     print(
         f"With {n_comp} components, we capture {pca.explained_variance_ratio_.sum()*100:.1f}% of the variance"
     )
