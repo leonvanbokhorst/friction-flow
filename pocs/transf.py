@@ -291,9 +291,8 @@ def test_addition(model, num1, num2, max_digits=3):
         predicted = torch.argmax(output, dim=-1)
         
         # Filter out padding tokens
-        result = ''.join(str(x) for x in predicted[0].tolist() if x != 0).lstrip('0')
-        if not result:  # If result is empty after filtering
-            result = '0'
+        result = ''.join(str(x) for x in predicted[0].tolist() if x != 0).lstrip('0') or '0'
+
         
         print(f"{num1} + {num2} = {result} (expected {num1 + num2})")
         return result
